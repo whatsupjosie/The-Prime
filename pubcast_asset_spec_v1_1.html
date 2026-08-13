@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PubCast AI — Asset Technical Specification v1.1</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400&display=swap');
+:root {
+  --gold:#c9a84c; --gold-l:#f0d060; --gold-d:#7a5a1a;
+  --gold-dim:rgba(201,168,76,0.15); --gold-line:rgba(201,168,76,0.25);
+  --black:#0d0d0d; --near-black:#111009; --surface:#161410; --surface-2:#1e1b14;
+  --text:#e8dfc8; --text-dim:#8a7f68; --text-muted:#4a4438;
+  --red:#cc3311; --green:#4a8c5c; --amber:#c97c20;
+  --mono:'DM Mono',monospace; --sans:'DM Sans',sans-serif;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+html{font-size:14px;}
+body{background:var(--black);color:var(--text);font-family:var(--sans);font-weight:300;line-height:1.65;}
+@media print{
+  body{background:#fff;color:#111;font-size:11pt;}
+  :root{--gold:#9a7830;--text:#111;--text-dim:#555;--surface:#f5f3ee;--surface-2:#eae7df;--gold-line:rgba(0,0,0,0.15);--gold-dim:rgba(154,120,48,0.08);}
+  section{page-break-inside:avoid;}
+}
+.page{max-width:960px;margin:0 auto;padding:0 2.5rem 4rem;}
+header{background:var(--near-black);border-bottom:1px solid var(--gold-line);padding:2.8rem 2.5rem 2rem;margin-bottom:3rem;position:relative;}
+.header-eyebrow{font-family:var(--mono);font-size:.65rem;letter-spacing:.35em;color:var(--gold-d);text-transform:uppercase;margin-bottom:.6rem;}
+.header-title{font-family:var(--mono);font-size:1.05rem;font-weight:500;letter-spacing:.18em;color:var(--gold);text-transform:uppercase;margin-bottom:.25rem;}
+.header-subtitle{font-size:.82rem;color:var(--text-dim);letter-spacing:.06em;}
+.header-meta{position:absolute;top:2.8rem;right:2.5rem;text-align:right;font-family:var(--mono);font-size:.62rem;color:var(--text-muted);letter-spacing:.08em;line-height:1.8;}
+.header-rule{position:absolute;bottom:-1px;left:2.5rem;width:4rem;height:2px;background:var(--gold);}
+section{margin-bottom:3.2rem;}
+.section-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.4em;color:var(--gold-d);text-transform:uppercase;margin-bottom:.5rem;}
+.section-title{font-family:var(--mono);font-size:.88rem;font-weight:500;color:var(--gold);letter-spacing:.1em;text-transform:uppercase;padding-bottom:.6rem;border-bottom:1px solid var(--gold-line);margin-bottom:1.4rem;}
+.intro{background:var(--surface);border-left:2px solid var(--gold);padding:1.2rem 1.4rem;font-size:.88rem;color:var(--text);line-height:1.75;margin-bottom:2.4rem;}
+.intro p+p{margin-top:.75rem;}
+.budget-overview{background:var(--surface);border:1px solid var(--gold-line);padding:1.4rem 1.6rem;margin-bottom:2rem;}
+.budget-overview-title{font-family:var(--mono);font-size:.68rem;letter-spacing:.25em;color:var(--gold);text-transform:uppercase;margin-bottom:1.2rem;}
+.budget-bars{display:grid;grid-template-columns:9rem 1fr 7rem;gap:.5rem 1rem;align-items:center;}
+.budget-label{font-family:var(--mono);font-size:.7rem;color:var(--text-dim);}
+.budget-bar-track{height:5px;background:var(--surface-2);border-radius:2px;overflow:hidden;}
+.budget-bar-fill{height:100%;background:var(--gold);border-radius:2px;opacity:.7;}
+.budget-bar-fill.warn{background:var(--amber);}
+.budget-bar-fill.hard{background:var(--red);}
+.budget-value{font-family:var(--mono);font-size:.68rem;color:var(--text-dim);text-align:right;}
+.budget-note{font-family:var(--mono);font-size:.62rem;color:var(--text-muted);margin-top:1rem;}
+.asset-card{background:var(--surface);border:1px solid var(--gold-line);margin-bottom:1.2rem;overflow:hidden;}
+.asset-card-header{display:flex;align-items:baseline;gap:1rem;padding:.85rem 1.2rem;background:var(--surface-2);border-bottom:1px solid var(--gold-line);}
+.asset-card-name{font-family:var(--mono);font-size:.78rem;font-weight:500;color:var(--gold);letter-spacing:.12em;text-transform:uppercase;}
+.asset-card-desc{font-size:.78rem;color:var(--text-dim);}
+.asset-card-body{padding:1rem 1.2rem;}
+.tier-table{width:100%;border-collapse:collapse;font-size:.78rem;margin-bottom:.8rem;}
+.tier-table th{font-family:var(--mono);font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:var(--text-muted);text-align:left;padding:.35rem .7rem .35rem 0;border-bottom:1px solid var(--gold-line);font-weight:400;}
+.tier-table td{padding:.45rem .7rem .45rem 0;border-bottom:1px solid rgba(201,168,76,.07);vertical-align:top;color:var(--text);}
+.tier-table tr:last-child td{border-bottom:none;}
+.tier-table td:first-child{font-family:var(--mono);font-size:.72rem;color:var(--gold);white-space:nowrap;width:9rem;}
+.val{font-family:var(--mono);font-size:.75rem;color:var(--text);}
+.val-warn{font-family:var(--mono);font-size:.75rem;color:var(--amber);}
+.val-ok{font-family:var(--mono);font-size:.75rem;color:var(--green);}
+.val-target{font-family:var(--mono);font-size:.75rem;color:var(--text-dim);font-style:italic;}
+.card-notes{margin-top:.6rem;padding-top:.6rem;border-top:1px solid rgba(201,168,76,.08);}
+.note-line{font-size:.76rem;color:var(--text-dim);line-height:1.6;padding-left:.9rem;position:relative;}
+.note-line::before{content:'–';position:absolute;left:0;color:var(--gold-d);}
+.note-line+.note-line{margin-top:.2rem;}
+.note-line.hard{color:var(--text);}
+.note-line.hard::before{content:'!';color:var(--red);}
+.rules-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:.4rem;}
+@media(max-width:640px){.rules-grid{grid-template-columns:1fr;}}
+.rule-block{background:var(--surface-2);border:1px solid var(--gold-line);padding:1rem 1.1rem;}
+.rule-block-title{font-family:var(--mono);font-size:.62rem;letter-spacing:.25em;color:var(--gold-d);text-transform:uppercase;margin-bottom:.6rem;}
+.rule-item{font-size:.76rem;color:var(--text-dim);line-height:1.6;padding-left:.9rem;position:relative;}
+.rule-item::before{content:'✓';position:absolute;left:0;color:var(--green);font-size:.65rem;}
+.rule-item.no::before{content:'✗';color:var(--red);}
+.rule-item+.rule-item{margin-top:.2rem;}
+.format-row{display:grid;grid-template-columns:5rem 1fr;gap:0 1.2rem;align-items:start;padding:.5rem 0;border-bottom:1px solid rgba(201,168,76,.07);}
+.format-row:last-child{border-bottom:none;}
+.format-name{font-family:var(--mono);font-size:.75rem;color:var(--gold);padding-top:.05rem;}
+.format-name.best::after{content:' ★';color:var(--gold-l);font-size:.65rem;}
+.format-desc{font-size:.76rem;color:var(--text-dim);line-height:1.55;}
+.converter-states{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.8rem;margin-bottom:.8rem;}
+@media(max-width:640px){.converter-states{grid-template-columns:1fr;}}
+.conv-state{border:1px solid var(--gold-line);padding:.8rem .9rem;}
+.conv-state-title{font-family:var(--mono);font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;margin-bottom:.4rem;}
+.conv-state-title.confirmed{color:var(--green);}
+.conv-state-title.likely{color:var(--amber);}
+.conv-state-title.unmatched{color:var(--red);}
+.conv-state-desc{font-size:.74rem;color:var(--text-dim);line-height:1.55;}
+.principle{background:var(--gold-dim);border:1px solid var(--gold-line);border-left:3px solid var(--gold);padding:1.1rem 1.3rem;margin:1rem 0;}
+.principle-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.3em;color:var(--gold-d);text-transform:uppercase;margin-bottom:.4rem;}
+.principle-text{font-size:.83rem;color:var(--text);line-height:1.7;font-style:italic;}
+.ai-chain{background:var(--surface);border:1px solid var(--gold-line);overflow:hidden;margin-bottom:1rem;}
+.ai-chain-header{background:var(--surface-2);border-bottom:1px solid var(--gold-line);padding:.7rem 1.2rem;font-family:var(--mono);font-size:.7rem;letter-spacing:.15em;color:var(--gold);text-transform:uppercase;}
+.ai-chain-body{padding:1rem 1.2rem;}
+.chain-step{display:grid;grid-template-columns:8rem 1fr;gap:0 1rem;padding:.6rem 0;border-bottom:1px solid rgba(201,168,76,.07);align-items:start;}
+.chain-step:last-child{border-bottom:none;}
+.chain-actor{font-family:var(--mono);font-size:.72rem;color:var(--gold);padding-top:.05rem;}
+.chain-desc{font-size:.76rem;color:var(--text-dim);line-height:1.6;}
+.chain-desc strong{color:var(--text);font-weight:500;}
+.chain-arrow{text-align:center;padding:.1rem 0;font-family:var(--mono);font-size:.65rem;color:var(--gold-d);letter-spacing:.1em;}
+.checklist{display:grid;grid-template-columns:1fr 1fr;gap:.3rem 2rem;margin-top:.6rem;}
+@media(max-width:640px){.checklist{grid-template-columns:1fr;}}
+.check-item{font-size:.76rem;color:var(--text-dim);padding-left:1.1rem;position:relative;line-height:1.55;}
+.check-item::before{content:'☐';position:absolute;left:0;color:var(--gold-d);font-size:.7rem;}
+.gut-check{background:var(--gold-dim);border:1px solid var(--gold-line);padding:1.2rem 1.4rem;margin-top:2rem;}
+.gut-check-title{font-family:var(--mono);font-size:.7rem;letter-spacing:.2em;color:var(--gold);text-transform:uppercase;margin-bottom:.7rem;}
+.gut-check-text{font-size:.82rem;color:var(--text);line-height:1.7;}
+.gut-check-text strong{color:var(--gold-l);font-weight:500;}
+footer{border-top:1px solid var(--gold-line);padding:1.4rem 0 0;margin-top:3rem;display:flex;justify-content:space-between;align-items:baseline;}
+.footer-mark{font-family:var(--mono);font-size:.65rem;color:var(--gold-d);letter-spacing:.12em;}
+.footer-motto{font-family:var(--mono);font-size:.65rem;color:var(--text-muted);font-style:italic;}
+</style>
+</head>
+<body>
+<header>
+  <div class="page" style="padding-top:0;padding-bottom:0;position:relative;">
+    <div class="header-eyebrow">Rear View Foresight LLC · Internal Technical Reference</div>
+    <div class="header-title">PubCast AI — Asset Technical Specification</div>
+    <div class="header-subtitle">Format standards · polygon budgets · scene limits · skeleton converter · AI observation chain</div>
+    <div class="header-meta">Version 1.1<br>2026-03-19<br>PubWorld / Studio Engine</div>
+    <div class="header-rule"></div>
+  </div>
+</header>
+
+<div class="page">
+
+<div class="intro">
+  <p>This document defines the technical standards for every asset class in PubCast AI. These are not suggestions. They are the line between a scene that works and one that doesn't.</p>
+  <p>The core test: <strong>can you comfortably place the expected count in a working studio scene alongside everything else?</strong> If you hesitate, it's too expensive. Build to leave room.</p>
+  <p style="margin-top:.6rem;font-size:.8rem;color:var(--text-dim);">
+    Numbers in <span style="color:var(--green);font-family:var(--mono);font-size:.8em;">green</span> are working targets.
+    <span style="color:var(--amber);font-family:var(--mono);font-size:.8em;">Amber</span> = allowed with justification.
+    <span style="color:var(--red);font-family:var(--mono);font-size:.8em;">Red / !</span> = hard limit, do not cross.
+  </p>
+</div>
+
+<!-- SCENE BUDGET -->
+<section>
+  <div class="section-label">Scene Limits</div>
+  <div class="section-title">Total Scene Budget</div>
+  <div class="budget-overview">
+    <div class="budget-overview-title">Per Active Scene — Baseline Desktop Target (subject to revision as renderer improves)</div>
+    <div class="budget-bars">
+      <div class="budget-label">Triangles (target)</div>
+      <div class="budget-bar-track"><div class="budget-bar-fill" style="width:65%"></div></div>
+      <div class="budget-value">400k target</div>
+
+      <div class="budget-label">Triangles (ceiling)</div>
+      <div class="budget-bar-track"><div class="budget-bar-fill hard" style="width:100%"></div></div>
+      <div class="budget-value">600k ceiling</div>
+
+      <div class="budget-label">Draw calls</div>
+      <div class="budget-bar-track"><div class="budget-bar-fill warn" style="width:70%"></div></div>
+      <div class="budget-value">&lt; 150</div>
+
+      <div class="budget-label">Texture memory</div>
+      <div class="budget-bar-track"><div class="budget-bar-fill" style="width:50%"></div></div>
+      <div class="budget-value">256 MB</div>
+
+      <div class="budget-label">Physics objects</div>
+      <div class="budget-bar-track"><div class="budget-bar-fill" style="width:40%"></div></div>
+      <div class="budget-value">&lt; 50 active</div>
+
+      <div class="budget-label">Particle systems</div>
+      <div class="budget-bar-track"><div class="budget-bar-fill" style="width:30%"></div></div>
+      <div class="budget-value">&lt; 5 simultaneous</div>
+
+      <div class="budget-label">Materials total</div>
+      <div class="budget-bar-track"><div class="budget-bar-fill" style="width:45%"></div></div>
+      <div class="budget-value">&lt; 40 unique</div>
+    </div>
+    <div class="budget-note">Every asset class draws from the same pools. 6 avatars at 30k each = 180k of the 400k target before a single prop or set loads.</div>
+  </div>
+</section>
+
+<!-- FORMATS -->
+<section>
+  <div class="section-label">File Formats</div>
+  <div class="section-title">Format Hierarchy</div>
+  <div class="asset-card">
+    <div class="asset-card-body" style="padding:1.2rem 1.4rem;">
+      <div class="format-row">
+        <div class="format-name best">GLB</div>
+        <div class="format-desc">First and default choice for all browser-facing handoffs. Portable, self-contained, least likely to arrive broken. Geometry, materials, textures, skeleton, and animations in one file.</div>
+      </div>
+      <div class="format-row">
+        <div class="format-name">OBJ</div>
+        <div class="format-desc">Raw geometry only. Materials in a separate MTL — easy to lose. No skeleton, no animation. Source format only. Convert to GLB before shipping.</div>
+      </div>
+      <div class="format-row">
+        <div class="format-name">FBX</div>
+        <div class="format-desc">Good pipeline source format. Carries rigging and animation. Not for browser-facing handoff. Binary FBX preferred. Convert to GLB before shipping.</div>
+      </div>
+      <div class="format-row">
+        <div class="format-name">STL</div>
+        <div class="format-desc">3D print format only. No UV, no rig, no material. Full conversion pipeline required before any production use.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SCALE / AXIS -->
+<section>
+  <div class="section-label">Import Standards</div>
+  <div class="section-title">Scale, Axis &amp; Units</div>
+  <div class="asset-card">
+    <div class="asset-card-body" style="padding:1.1rem 1.3rem;">
+      <table class="tier-table">
+        <thead><tr><th>Property</th><th>Standard</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Unit scale</td><td><span class="val">1 unit = 1 metre</span></td><td><span class="val-target">Confirm at export. Blender default is correct.</span></td></tr>
+          <tr><td>Up axis</td><td><span class="val">Y-up</span></td><td><span class="val-target">glTF standard. Z-up sources must be corrected at export.</span></td></tr>
+          <tr><td>Forward axis</td><td><span class="val">–Z forward</span></td><td><span class="val-target">glTF standard.</span></td></tr>
+          <tr><td>Pivot / origin</td><td><span class="val">Base centre</span></td><td><span class="val-target">Avatars: foot midpoint. Props: base centre. Sets: world origin.</span></td></tr>
+          <tr><td>Rest pose</td><td><span class="val">T-pose</span></td><td><span class="val-target">Arms horizontal, palms down. Required for retarget compatibility.</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-notes">
+        <div class="note-line hard">Wrong scale is the single most common import failure. Confirm unit scale before submitting any asset.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- AVATARS -->
+<section>
+  <div class="section-label">Asset Class 01</div>
+  <div class="section-title">Avatars</div>
+  <div class="asset-card">
+    <div class="asset-card-header">
+      <div class="asset-card-name">Avatar Tiers</div>
+      <div class="asset-card-desc">Characters that move, rig, and stack in scenes together</div>
+    </div>
+    <div class="asset-card-body">
+      <table class="tier-table">
+        <thead><tr><th>Tier</th><th>Triangles</th><th>Materials</th><th>Textures</th><th>Bones</th><th>Scene Count</th></tr></thead>
+        <tbody>
+          <tr><td>Default</td><td><span class="val-ok">15k – 30k</span></td><td><span class="val">1 – 2</span></td><td><span class="val">1k – 2k</span></td><td><span class="val">up to 89</span></td><td><span class="val">3 – 6</span></td></tr>
+          <tr><td>Featured</td><td><span class="val-warn">30k – 60k</span></td><td><span class="val">2 – 3</span></td><td><span class="val">2k</span></td><td><span class="val">up to 89+</span></td><td><span class="val">1 – 2</span></td></tr>
+          <tr><td>Crowd</td><td><span class="val-ok">5k – 12k</span></td><td><span class="val">1</span></td><td><span class="val">512 – 1k</span></td><td><span class="val">32 – 50</span></td><td><span class="val">up to 12</span></td></tr>
+          <tr><td>Background</td><td><span class="val-ok">2k – 5k</span></td><td><span class="val">1</span></td><td><span class="val">512</span></td><td><span class="val">impostor / none</span></td><td><span class="val">any</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-notes">
+        <div class="note-line hard">60k triangles is the ceiling for any avatar at any tier. Do not cross.</div>
+        <div class="note-line">House rig: 89-bone UE5-compatible standard (Lumen, Azure, Nova, Manny, Shela). Not all 89 bones fire every frame — hand and finger bones deactivate outside close-up work.</div>
+        <div class="note-line">Sourced avatars with non-standard skeletons must pass through the Bone Converter and ship with a validated retarget map.</div>
+        <div class="note-line">Every default and featured avatar must pass a seated deformation check. Shoulders, hips, and knees must survive broadcast poses.</div>
+        <div class="note-line">Customisation priority: swappable hair, outfits, accessories, tintable materials, clean UVs, neutral base body.</div>
+        <div class="note-line">Hard-surface hair mesh preferred. Limit transparency stacking to 1 layer.</div>
+      </div>
+    </div>
+  </div>
+  <div class="rules-grid">
+    <div class="rule-block">
+      <div class="rule-block-title">Acceptable</div>
+      <div class="rule-item">Diffuse + normal map per character</div>
+      <div class="rule-item">Single atlas texture covering full body</div>
+      <div class="rule-item">Hard-surface hair mesh</div>
+      <div class="rule-item">Morph targets for facial expression</div>
+      <div class="rule-item">Small blendshape set (blink, smile, brow, phonemes)</div>
+    </div>
+    <div class="rule-block">
+      <div class="rule-block-title">Do Not Ship</div>
+      <div class="rule-item no">Over 60k triangles at any tier</div>
+      <div class="rule-item no">More than 3 materials on one avatar</div>
+      <div class="rule-item no">Layered alpha hair cards (3+ layers)</div>
+      <div class="rule-item no">4k textures on default tier</div>
+      <div class="rule-item no">Sourced avatar without validated retarget map</div>
+      <div class="rule-item no">Avatar that fails seated deformation check</div>
+    </div>
+  </div>
+</section>
+
+<!-- SKELETON CONVERTER -->
+<section>
+  <div class="section-label">Skeleton Standards</div>
+  <div class="section-title">Bone Naming &amp; Skeleton Converter</div>
+
+  <div class="intro" style="margin-bottom:1.2rem;">
+    <p>Bone names are the contract. The program reads names and trusts them — a bone called <code style="font-family:var(--mono);font-size:.85em;color:var(--gold);">UpperArm_L</code> is treated as the left upper arm without verification. A mislabeled bone corrupts every animation that touches it. The converter maps incoming skeletons to UE5 names by topology and hierarchy — not by name matching. <strong>The user is the last line of defence.</strong></p>
+  </div>
+
+  <div class="asset-card">
+    <div class="asset-card-header">
+      <div class="asset-card-name">Converter Output States</div>
+      <div class="asset-card-desc">One state per bone. Only Confirmed mappings apply automatically.</div>
+    </div>
+    <div class="asset-card-body">
+      <div class="converter-states">
+        <div class="conv-state">
+          <div class="conv-state-title confirmed">Confirmed</div>
+          <div class="conv-state-desc">Topology match is unambiguous. Renamed automatically. No user review required.</div>
+        </div>
+        <div class="conv-state">
+          <div class="conv-state-title likely">Likely</div>
+          <div class="conv-state-desc">Good candidate, not certain. Flagged for user review. Suggested but never applied without approval.</div>
+        </div>
+        <div class="conv-state">
+          <div class="conv-state-title unmatched">Unmatched</div>
+          <div class="conv-state-desc">No clear candidate. House bone marked inactive. User may manually assign.</div>
+        </div>
+      </div>
+      <div class="card-notes">
+        <div class="note-line hard">Likely mappings are never applied without explicit user approval. No exceptions.</div>
+        <div class="note-line">Unmatched bones go to the inactive pool. A 50-bone skeleton missing finger joints runs correctly because those bones are already optional in the house rig.</div>
+        <div class="note-line">UI: incoming and house skeletons shown side by side. Proposed mappings as lines — green confirmed, amber likely, red unmatched. User drags to reassign. User approves. That map is then trusted by the system.</div>
+        <div class="note-line">Output: retarget map JSON. Original asset is never modified.</div>
+        <div class="note-line">Every retarget map carries a live confidence score updated by Jeremy Cricket across takes. Consistent anomalies degrade confidence and surface to the user.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- AI OBSERVATION CHAIN -->
+<section>
+  <div class="section-label">AI Systems</div>
+  <div class="section-title">Kinematic Integrity &amp; AI Observation Chain</div>
+
+  <div class="principle">
+    <div class="principle-label">Design Principle</div>
+    <div class="principle-text">No AI system in PubCast has complete context. Each operates within its domain, passes observations rather than conclusions, and defers to the chain above it. The user receives the combined read, not a single verdict. The user decides.</div>
+  </div>
+
+  <div class="asset-card" style="margin-top:1rem;">
+    <div class="asset-card-header">
+      <div class="asset-card-name">Purfluous — Kinematic Integrity Monitor</div>
+      <div class="asset-card-desc">Visual and kinematic context only. Watches every frame of every take.</div>
+    </div>
+    <div class="asset-card-body">
+      <div class="card-notes" style="border-top:none;margin-top:0;padding-top:0;">
+        <div class="note-line">Carries a joint limit table per character class. Every joint has a documented range of motion. Purfluous watches against these limits on every frame.</div>
+        <div class="note-line">Character classes carry different limits — trained dancer, fighter, child, office worker, non-human. Purfluous needs to know what kind of body it is watching.</div>
+        <div class="note-line">Three response levels: Within range (silent). Approaching limit (watch and wait). Past anatomical limit (pass to Jeremy with context).</div>
+        <div class="note-line">Distinguishes injury from non-human: injury is sudden force with surrounding joint compensation. Non-human is smooth, consistent, contextless violation — no cause, no compensation.</div>
+        <div class="note-line">When a character is confirmed non-human and nothing reads as malfunction, Purfluous notes it on the avatar's profile and stops flagging for that character.</div>
+        <div class="note-line hard">Every observation is written to the background chat screen log and the black box regardless of whether Purfluous escalates. Nothing is ever silently dismissed.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ai-chain" style="margin-top:1rem;">
+    <div class="ai-chain-header">Observation Chain — Kinematic Anomaly</div>
+    <div class="ai-chain-body">
+      <div class="chain-step">
+        <div class="chain-actor">Purfluous</div>
+        <div class="chain-desc">Detects joint exceeding anatomical range. Scores it. Passes to Jeremy with two specific questions: <strong>Is this a human body?</strong> and <strong>Is anything reading as malfunction?</strong></div>
+      </div>
+      <div class="chain-arrow">↓</div>
+      <div class="chain-step">
+        <div class="chain-actor">Jeremy Cricket</div>
+        <div class="chain-desc"><strong>Is this a human?</strong> — reads character registration. Answers definitively. <strong>Is anything malfunctioning?</strong> — reads retarget map confidence, session history, anomaly patterns. Gives a qualified answer, not a verdict. Jeremy answers. He does not decide.</div>
+      </div>
+      <div class="chain-arrow">↓</div>
+      <div class="chain-step">
+        <div class="chain-actor">Purfluous</div>
+        <div class="chain-desc">Receives both answers. Now has full context: kinematic data + character identity + session history. Decides whether to surface to user and frames the message accordingly.</div>
+      </div>
+      <div class="chain-arrow">↓</div>
+      <div class="chain-step">
+        <div class="chain-actor">User</div>
+        <div class="chain-desc">Receives the combined read at a natural break — between takes, after cut, or when asked. Makes the call. Nothing stops a take. Nothing overrides a map. The user decides.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="asset-card" style="margin-top:1rem;">
+    <div class="asset-card-header">
+      <div class="asset-card-name">The Four Possible Reads</div>
+      <div class="asset-card-desc">What Purfluous concludes from Jeremy's two answers</div>
+    </div>
+    <div class="asset-card-body">
+      <table class="tier-table">
+        <thead><tr><th>Human?</th><th>Malfunction?</th><th>Conclusion</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>Yes</td><td>No</td><td><span class="val">Possible real injury or extreme performance</span></td><td><span class="val-warn">Surface to user with context</span></td></tr>
+          <tr><td>Yes</td><td>Yes</td><td><span class="val">Technical problem reading as injury</span></td><td><span class="val-warn">Surface + flag retarget map</span></td></tr>
+          <tr><td>No</td><td>No</td><td><span class="val">Intentional non-human motion</span></td><td><span class="val-ok">File, stop flagging this avatar</span></td></tr>
+          <tr><td>No</td><td>Yes</td><td><span class="val">Non-human character with technical problem</span></td><td><span class="val-warn">Surface + flag retarget map</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-notes">
+        <div class="note-line hard">The mislabeling case: a wrong bone name can produce smooth, consistent out-of-range motion with no anomaly history. Jeremy honestly reports no malfunction. Purfluous honestly reports out of human range. Both pieces reach the user together. The user makes the call.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="asset-card" style="margin-top:1rem;">
+    <div class="asset-card-header">
+      <div class="asset-card-name">Black Box &amp; Background Chat Log</div>
+      <div class="asset-card-desc">Nothing is ever silently dismissed</div>
+    </div>
+    <div class="asset-card-body">
+      <div class="card-notes" style="border-top:none;margin-top:0;padding-top:0;">
+        <div class="note-line hard">Every observation is written to the black box and background chat screen log regardless of escalation decision. The chain filters what interrupts the user — not what gets remembered.</div>
+        <div class="note-line">The black box is the flight recorder. Runs always. Records everything. The authoritative record of what the system knew and when it knew it.</div>
+        <div class="note-line">The background chat screen is the human-readable version — always accessible, always honest about everything that passed through the system.</div>
+        <div class="note-line">Purfluous's dismissal decisions are auditable from the log. Patterns of systematic mis-scoring show up in the record.</div>
+        <div class="note-line">Jeremy can identify patterns across sessions and surface them independently even if Purfluous never escalated the individual events.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PROPS -->
+<section>
+  <div class="section-label">Asset Class 02</div>
+  <div class="section-title">Props &amp; Furniture</div>
+  <div class="asset-card">
+    <div class="asset-card-header">
+      <div class="asset-card-name">Prop Tiers</div>
+      <div class="asset-card-desc">Objects that live in scenes alongside avatars and sets</div>
+    </div>
+    <div class="asset-card-body">
+      <table class="tier-table">
+        <thead><tr><th>Tier</th><th>Triangles</th><th>Materials</th><th>Textures</th><th>Use Case</th></tr></thead>
+        <tbody>
+          <tr><td>Hero</td><td><span class="val-warn">2k – 8k</span></td><td><span class="val">1 – 2</span></td><td><span class="val">1k – 2k</span></td><td><span class="val">Close-up, story-critical, frequently seen</span></td></tr>
+          <tr><td>Standard</td><td><span class="val-ok">500 – 2k</span></td><td><span class="val">1</span></td><td><span class="val">512 – 1k</span></td><td><span class="val">Mid-ground, regularly placed</span></td></tr>
+          <tr><td>Background</td><td><span class="val-ok">100 – 500</span></td><td><span class="val">1</span></td><td><span class="val">256 – 512</span></td><td><span class="val">Scene dressing, rarely close</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-notes">
+        <div class="note-line hard">A 40k triangle chair is not acceptable at any tier.</div>
+        <div class="note-line">Most props are Standard. Hero designation must be explicit — not the default.</div>
+        <div class="note-line">Destructible props are governed by the Voxel Objects spec.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SETS -->
+<section>
+  <div class="section-label">Asset Class 03</div>
+  <div class="section-title">Sets &amp; Environments</div>
+  <div class="asset-card">
+    <div class="asset-card-header">
+      <div class="asset-card-name">Environment Tiers</div>
+      <div class="asset-card-desc">Biggest geometry allowance. Lowest movement cost. Static.</div>
+    </div>
+    <div class="asset-card-body">
+      <table class="tier-table">
+        <thead><tr><th>Tier</th><th>Triangles</th><th>Materials</th><th>Textures</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Full Room</td><td><span class="val-warn">20k – 50k</span></td><td><span class="val">2 – 4</span></td><td><span class="val">2k – 4k atlas</span></td><td><span class="val">Total for entire room geometry</span></td></tr>
+          <tr><td>Modular Piece</td><td><span class="val-ok">500 – 2k</span></td><td><span class="val">1 – 2</span></td><td><span class="val">shared atlas</span></td><td><span class="val">Wall, floor, door, ceiling segment</span></td></tr>
+          <tr><td>Skybox / BG</td><td><span class="val-ok">1k – 5k</span></td><td><span class="val">1</span></td><td><span class="val">2k – 4k</span></td><td><span class="val">Static distant background only</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-notes">
+        <div class="note-line">Modular pieces on one atlas = one draw call. Draw call budget is won or lost here.</div>
+        <div class="note-line">Cull backfaces at export. Unseen interior faces waste triangle budget.</div>
+        <div class="note-line">PubWorld voxel rooms are governed by the Voxel Objects spec.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- VOXEL -->
+<section>
+  <div class="section-label">Asset Class 04</div>
+  <div class="section-title">Voxel Objects (Baked)</div>
+  <div class="asset-card">
+    <div class="asset-card-header">
+      <div class="asset-card-name">Voxel Bake Budgets</div>
+      <div class="asset-card-desc">Authored in VoxelStudio. Baked to GLB. Source JSON kept permanently.</div>
+    </div>
+    <div class="asset-card-body">
+      <table class="tier-table">
+        <thead><tr><th>Class</th><th>Max Tris (baked)</th><th>Max Primitives</th><th>Fragment Limit</th><th>Example</th></tr></thead>
+        <tbody>
+          <tr><td>Small detail</td><td><span class="val-ok">&lt; 2k</span></td><td><span class="val">50</span></td><td><span class="val">50</span></td><td><span class="val">Candle, cup, small prop</span></td></tr>
+          <tr><td>Medium object</td><td><span class="val-ok">2k – 10k</span></td><td><span class="val">200</span></td><td><span class="val">200</span></td><td><span class="val">Chair, table, crate</span></td></tr>
+          <tr><td>Large structure</td><td><span class="val-warn">10k – 30k</span></td><td><span class="val">600</span></td><td><span class="val">200 max</span></td><td><span class="val">Arch, column, wall section</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-notes">
+        <div class="note-line">LOD levels (LOW / LOW-MED / MED / MED-HIGH / HIGH) are authoring constraints, not render states. Different parts of the same object can mix LOD levels freely. LOW breaks into large cubes at destruction. HIGH shatters into fine wedge and corner pieces.</div>
+        <div class="note-line hard">Source voxel JSON must be kept alongside every baked GLB. The JSON is the source of truth. The GLB is the output artifact.</div>
+        <div class="note-line">Large structures should declare pivot groups at authoring time for any section carrying a motion tracker, destruction hinge, or collision separation point.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- EFFECTS -->
+<section>
+  <div class="section-label">Asset Class 05</div>
+  <div class="section-title">Effects &amp; Particles</div>
+  <div class="asset-card">
+    <div class="asset-card-header">
+      <div class="asset-card-name">Effects Budget</div>
+      <div class="asset-card-desc">No polygon budget. Draw call and particle count budget.</div>
+    </div>
+    <div class="asset-card-body">
+      <table class="tier-table">
+        <thead><tr><th>Type</th><th>Max Particles</th><th>Draw Calls</th><th>Simultaneous</th></tr></thead>
+        <tbody>
+          <tr><td>Ambient / idle</td><td><span class="val-ok">500 – 1k</span></td><td><span class="val">1</span></td><td><span class="val">3 per scene</span></td></tr>
+          <tr><td>Action / event</td><td><span class="val-warn">1k – 5k</span></td><td><span class="val">1 – 3</span></td><td><span class="val">2 per scene</span></td></tr>
+          <tr><td>Destruction debris</td><td><span class="val-warn">fragment count</span></td><td><span class="val">1 per object</span></td><td><span class="val">2 simultaneous</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-notes">
+        <div class="note-line">Destruction debris are voxel fragments — geometry, not particles. Persistence controlled by DestructionProfile.debris_persistence (default 8s).</div>
+        <div class="note-line">One additive blending layer over opaque is fine. Three stacked is a GPU problem.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- UI -->
+<section>
+  <div class="section-label">Asset Class 06</div>
+  <div class="section-title">UI Elements</div>
+  <div class="asset-card">
+    <div class="asset-card-header">
+      <div class="asset-card-name">UI Asset Rules</div>
+      <div class="asset-card-desc">Geometry budget is separate from scene budget. Cost is draw calls and overdraw.</div>
+    </div>
+    <div class="asset-card-body">
+      <div class="rules-grid" style="margin-top:0;">
+        <div class="rule-block">
+          <div class="rule-block-title">Prefer</div>
+          <div class="rule-item">HTML / CSS for all 2D UI</div>
+          <div class="rule-item">SVG for icons and decorative elements</div>
+          <div class="rule-item">CSS transitions over JS animation</div>
+          <div class="rule-item">Under 500 tris for any 3D UI element</div>
+          <div class="rule-item">Single material per UI panel</div>
+        </div>
+        <div class="rule-block">
+          <div class="rule-block-title">Avoid</div>
+          <div class="rule-item no">Transparency stack beyond 2 layers</div>
+          <div class="rule-item no">Per-frame canvas redraws in render loop</div>
+          <div class="rule-item no">Live shader effects on scrolling text</div>
+          <div class="rule-item no">3D UI elements over 500 tris</div>
+          <div class="rule-item no">Unoptimised font rendering on large text blocks</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HANDOFF CHECKLIST -->
+<section>
+  <div class="section-label">Submission Requirements</div>
+  <div class="section-title">Source Handoff Checklist</div>
+  <div class="asset-card">
+    <div class="asset-card-body" style="padding:1.1rem 1.3rem;">
+      <p style="font-size:.78rem;color:var(--text-dim);margin-bottom:.8rem;">Every asset submitted for production must include all of the following:</p>
+      <div class="checklist">
+        <div class="check-item">Source file (Blender, Maya, or equivalent)</div>
+        <div class="check-item">Exported GLB (browser-ready, final)</div>
+        <div class="check-item">All textures (named, power-of-two)</div>
+        <div class="check-item">License or rights confirmation</div>
+        <div class="check-item">Preview render (turntable or still)</div>
+        <div class="check-item">Rig note (bone count, skeleton type)</div>
+        <div class="check-item">Animation list (name, loop Y/N, frame range)</div>
+        <div class="check-item">Scale / axis / origin confirmation</div>
+        <div class="check-item">Retarget map JSON (sourced avatars only)</div>
+        <div class="check-item">Voxel source JSON (voxel objects only)</div>
+        <div class="check-item">Seated deformation screenshot (avatars only)</div>
+        <div class="check-item">Triangle count and material count declared</div>
+      </div>
+      <div class="card-notes" style="margin-top:.8rem;">
+        <div class="note-line hard">An asset submitted without its handoff package is not production-ready regardless of visual quality.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- GUT CHECK -->
+<div class="gut-check">
+  <div class="gut-check-title">The Scene Test — Applies to Every Asset</div>
+  <div class="gut-check-text">
+    Before approving any asset: place the expected count in a working studio scene alongside everything else that would normally be there. If the scene hesitates, stutters, or you think twice before adding the third one, the asset is too expensive. <strong>Build to leave room.</strong> A beautiful asset that breaks the scene when multiplied is not a production-ready asset.
+  </div>
+</div>
+
+<footer>
+  <div class="footer-mark">REAR VIEW FORESIGHT LLC · PUBCAST AI · ASSET SPEC v1.1 · 2026-03-19</div>
+  <div class="footer-motto">Feic Mo Chroí™</div>
+</footer>
+
+</div>
+</body>
+</html>

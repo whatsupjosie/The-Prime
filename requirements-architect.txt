@@ -1,0 +1,28 @@
+# PubCast AI v5.0 — Architect (Local GGUF Inference) Dependencies
+#
+# Install AFTER base requirements:
+#   pip install -r requirements-architect.txt
+#
+# llama-cpp-python requires a C++ compiler and can be built for CPU or GPU.
+# Read the build options below before installing.
+#
+# ── CPU-only (default, no GPU required) ─────────────────────────────────────────
+#   pip install llama-cpp-python
+#
+# ── CUDA (NVIDIA GPU) ────────────────────────────────────────────────────────────
+#   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+#
+# ── Metal (Apple Silicon) ────────────────────────────────────────────────────────
+#   CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+#
+# ── Windows (CPU, pre-built wheel — avoids needing Visual Studio) ────────────────
+#   pip install llama-cpp-python --prefer-binary
+#
+# Model files expected (place in repo root or set PUBCAST_GGUF_DIR env var):
+#   google_gemma-3-1b-it-Q4_K_L.gguf   → Studio role
+#   google_gemma-3-1b-it-Q6_K.gguf     → Architect role
+#
+# NOTE: Do NOT commit .gguf files to git. Add them to .gitignore.
+#       Download or copy them to the local repo root before running.
+
+llama-cpp-python>=0.2.56

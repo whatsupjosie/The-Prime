@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PubCast AI — Asset Technical Specification</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400&display=swap');
+
+:root {
+  --gold:        #c9a84c;
+  --gold-l:      #f0d060;
+  --gold-d:      #7a5a1a;
+  --gold-dim:    rgba(201,168,76,0.15);
+  --gold-line:   rgba(201,168,76,0.25);
+  --black:       #0d0d0d;
+  --near-black:  #111009;
+  --surface:     #161410;
+  --surface-2:   #1e1b14;
+  --text:        #e8dfc8;
+  --text-dim:    #8a7f68;
+  --text-muted:  #4a4438;
+  --red:         #cc3311;
+  --green:       #4a8c5c;
+  --amber:       #c97c20;
+  --mono:        'DM Mono', monospace;
+  --sans:        'DM Sans', sans-serif;
+}
+
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+html { font-size: 14px; }
+
+body {
+  background: var(--black);
+  color: var(--text);
+  font-family: var(--sans);
+  font-weight: 300;
+  line-height: 1.65;
+  padding: 0;
+}
+
+/* ── PRINT ───────────────────────────────────────────────────────── */
+@media print {
+  body { background: #fff; color: #111; font-size: 11pt; }
+  .page { max-width: 100%; padding: 0; }
+  header { background: #fff !important; border-bottom: 2pt solid #c9a84c; }
+  .header-rule { display: none; }
+  :root {
+    --gold: #9a7830; --text: #111; --text-dim: #555;
+    --surface: #f5f3ee; --surface-2: #eae7df;
+    --gold-line: rgba(0,0,0,0.15); --gold-dim: rgba(154,120,48,0.08);
+  }
+  section { page-break-inside: avoid; }
+}
+
+/* ── LAYOUT ──────────────────────────────────────────────────────── */
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 2.5rem 4rem;
+}
+
+/* ── HEADER ──────────────────────────────────────────────────────── */
+header {
+  background: var(--near-black);
+  border-bottom: 1px solid var(--gold-line);
+  padding: 2.8rem 2.5rem 2rem;
+  margin-bottom: 3rem;
+  position: relative;
+}
+
+.header-eyebrow {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.35em;
+  color: var(--gold-d);
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+}
+
+.header-title {
+  font-family: var(--mono);
+  font-size: 1.05rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+.header-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+}
+
+.header-meta {
+  position: absolute;
+  top: 2.8rem;
+  right: 2.5rem;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  line-height: 1.8;
+}
+
+.header-rule {
+  position: absolute;
+  bottom: -1px;
+  left: 2.5rem;
+  width: 4rem;
+  height: 2px;
+  background: var(--gold);
+}
+
+/* ── SECTION ─────────────────────────────────────────────────────── */
+section {
+  margin-bottom: 3.2rem;
+}
+
+.section-label {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.4em;
+  color: var(--gold-d);
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+
+.section-title {
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--gold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--gold-line);
+  margin-bottom: 1.4rem;
+}
+
+/* ── INTRO BLOCK ─────────────────────────────────────────────────── */
+.intro {
+  background: var(--surface);
+  border-left: 2px solid var(--gold);
+  padding: 1.2rem 1.4rem;
+  font-size: 0.88rem;
+  color: var(--text);
+  line-height: 1.75;
+  margin-bottom: 2.4rem;
+}
+
+.intro p + p { margin-top: 0.75rem; }
+
+/* ── SCENE BUDGET BAR ─────────────────────────────────────────────── */
+.budget-overview {
+  background: var(--surface);
+  border: 1px solid var(--gold-line);
+  padding: 1.4rem 1.6rem;
+  margin-bottom: 2rem;
+}
+
+.budget-overview-title {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.25em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 1.2rem;
+}
+
+.budget-bars {
+  display: grid;
+  grid-template-columns: 9rem 1fr 7rem;
+  gap: 0.5rem 1rem;
+  align-items: center;
+}
+
+.budget-label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+
+.budget-bar-track {
+  height: 5px;
+  background: var(--surface-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.budget-bar-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 2px;
+  opacity: 0.7;
+}
+
+.budget-bar-fill.warn { background: var(--amber); }
+.budget-bar-fill.hard { background: var(--red); }
+
+.budget-value {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.budget-note {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  margin-top: 1rem;
+  letter-spacing: 0.04em;
+}
+
+/* ── ASSET CLASS CARD ────────────────────────────────────────────── */
+.asset-card {
+  background: var(--surface);
+  border: 1px solid var(--gold-line);
+  margin-bottom: 1.2rem;
+  overflow: hidden;
+}
+
+.asset-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.85rem 1.2rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--gold-line);
+}
+
+.asset-card-name {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--gold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.asset-card-desc {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.asset-card-body {
+  padding: 1rem 1.2rem;
+}
+
+/* ── TIER TABLE ───────────────────────────────────────────────────── */
+.tier-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  margin-bottom: 0.8rem;
+}
+
+.tier-table th {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 0.35rem 0.7rem 0.35rem 0;
+  border-bottom: 1px solid var(--gold-line);
+  font-weight: 400;
+}
+
+.tier-table td {
+  padding: 0.45rem 0.7rem 0.45rem 0;
+  border-bottom: 1px solid rgba(201,168,76,0.07);
+  vertical-align: top;
+  color: var(--text);
+}
+
+.tier-table tr:last-child td { border-bottom: none; }
+
+.tier-table td:first-child {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--gold);
+  white-space: nowrap;
+  width: 9rem;
+}
+
+.val {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text);
+}
+
+.val-warn {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--amber);
+}
+
+.val-ok {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--green);
+}
+
+/* ── NOTES ────────────────────────────────────────────────────────── */
+.card-notes {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid rgba(201,168,76,0.08);
+}
+
+.note-line {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  line-height: 1.6;
+  padding-left: 0.9rem;
+  position: relative;
+}
+
+.note-line::before {
+  content: '–';
+  position: absolute;
+  left: 0;
+  color: var(--gold-d);
+}
+
+.note-line + .note-line { margin-top: 0.2rem; }
+
+/* ── RULE BLOCKS ──────────────────────────────────────────────────── */
+.rules-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 0.4rem;
+}
+
+@media (max-width: 640px) {
+  .rules-grid { grid-template-columns: 1fr; }
+}
+
+.rule-block {
+  background: var(--surface-2);
+  border: 1px solid var(--gold-line);
+  padding: 1rem 1.1rem;
+}
+
+.rule-block-title {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.25em;
+  color: var(--gold-d);
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+}
+
+.rule-item {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  line-height: 1.6;
+  padding-left: 0.9rem;
+  position: relative;
+}
+
+.rule-item::before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  color: var(--green);
+  font-size: 0.65rem;
+}
+
+.rule-item.no::before {
+  content: '✗';
+  color: var(--red);
+}
+
+.rule-item + .rule-item { margin-top: 0.2rem; }
+
+/* ── FORMAT BLOCK ────────────────────────────────────────────────── */
+.format-row {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  gap: 0 1.2rem;
+  align-items: start;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(201,168,76,0.07);
+}
+
+.format-row:last-child { border-bottom: none; }
+
+.format-name {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--gold);
+  padding-top: 0.05rem;
+}
+
+.format-name.best::after {
+  content: ' ★';
+  color: var(--gold-l);
+  font-size: 0.65rem;
+}
+
+.format-desc {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+/* ── GUT CHECK ───────────────────────────────────────────────────── */
+.gut-check {
+  background: var(--gold-dim);
+  border: 1px solid var(--gold-line);
+  padding: 1.2rem 1.4rem;
+  margin-top: 2rem;
+}
+
+.gut-check-title {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 0.7rem;
+}
+
+.gut-check-text {
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.gut-check-text strong {
+  color: var(--gold-l);
+  font-weight: 500;
+}
+
+/* ── FOOTER ──────────────────────────────────────────────────────── */
+footer {
+  border-top: 1px solid var(--gold-line);
+  padding: 1.4rem 0 0;
+  margin-top: 3rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.footer-mark {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--gold-d);
+  letter-spacing: 0.12em;
+}
+
+.footer-motto {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="page" style="padding-top:0; padding-bottom:0; position:relative;">
+    <div class="header-eyebrow">Rear View Foresight LLC · Internal Technical Reference</div>
+    <div class="header-title">PubCast AI — Asset Technical Specification</div>
+    <div class="header-subtitle">Format standards, polygon budgets, and scene limits for all asset classes</div>
+    <div class="header-meta">
+      Version 1.0<br>
+      2026-03-19<br>
+      PubWorld / Studio Engine
+    </div>
+    <div class="header-rule"></div>
+  </div>
+</header>
+
+<div class="page">
+
+  <!-- INTRO -->
+  <div class="intro">
+    <p>This document defines the technical standards for every asset class used in PubCast AI — avatars, props, sets, voxel objects, effects, and UI. These are not suggestions. They are the line between a scene that works and one that doesn't.</p>
+    <p>The core test for any asset class: <strong>can you comfortably place the expected count of them in a working studio scene alongside everything else?</strong> If you hesitate, it's too expensive. Build to leave room.</p>
+  </div>
+
+  <!-- SCENE BUDGET OVERVIEW -->
+  <section>
+    <div class="section-label">Scene Limits</div>
+    <div class="section-title">Total Scene Budget</div>
+
+    <div class="budget-overview">
+      <div class="budget-overview-title">Hard Ceilings — Per Active Scene</div>
+      <div class="budget-bars">
+
+        <div class="budget-label">Triangles (working)</div>
+        <div class="budget-bar-track"><div class="budget-bar-fill" style="width:65%"></div></div>
+        <div class="budget-value">400k recommended</div>
+
+        <div class="budget-label">Triangles (ceiling)</div>
+        <div class="budget-bar-track"><div class="budget-bar-fill hard" style="width:100%"></div></div>
+        <div class="budget-value">600k hard ceiling</div>
+
+        <div class="budget-label">Draw calls</div>
+        <div class="budget-bar-track"><div class="budget-bar-fill warn" style="width:70%"></div></div>
+        <div class="budget-value">&lt; 150</div>
+
+        <div class="budget-label">Texture memory</div>
+        <div class="budget-bar-track"><div class="budget-bar-fill" style="width:50%"></div></div>
+        <div class="budget-value">256 MB</div>
+
+        <div class="budget-label">Physics objects</div>
+        <div class="budget-bar-track"><div class="budget-bar-fill" style="width:40%"></div></div>
+        <div class="budget-value">&lt; 50 active</div>
+
+        <div class="budget-label">Particle systems</div>
+        <div class="budget-bar-track"><div class="budget-bar-fill" style="width:30%"></div></div>
+        <div class="budget-value">&lt; 5 simultaneous</div>
+
+        <div class="budget-label">Materials total</div>
+        <div class="budget-bar-track"><div class="budget-bar-fill" style="width:45%"></div></div>
+        <div class="budget-value">&lt; 40 unique</div>
+
+      </div>
+      <div class="budget-note">
+        Every asset class draws from these pools. A scene with 6 avatars at 30k tris each has already spent 180k of the 400k working budget before a single prop or set piece is loaded.
+      </div>
+    </div>
+  </section>
+
+  <!-- FORMATS -->
+  <section>
+    <div class="section-label">File Formats</div>
+    <div class="section-title">Format Hierarchy</div>
+
+    <div class="asset-card">
+      <div class="asset-card-body" style="padding: 1.2rem 1.4rem;">
+        <div class="format-row">
+          <div class="format-name best">GLB</div>
+          <div class="format-desc">First and default choice. Portable, browser-native, self-contained — geometry, materials, textures, skeleton, and animations in one file. Least likely to arrive broken. Required format for all browser-facing handoffs.</div>
+        </div>
+        <div class="format-row">
+          <div class="format-name">OBJ</div>
+          <div class="format-desc">Acceptable for raw geometry only. Materials and textures live in a separate MTL file — easy to lose in transit. No skeleton, no animation. Use as source format only, convert to GLB before shipping.</div>
+        </div>
+        <div class="format-row">
+          <div class="format-name">FBX</div>
+          <div class="format-desc">Useful as a pipeline source format, especially from Blender or Maya. Carries rigging and animation data well. Not for browser-facing handoff — convert to GLB. Binary FBX preferred over ASCII.</div>
+        </div>
+        <div class="format-row">
+          <div class="format-name">STL</div>
+          <div class="format-desc">3D print format only. No UV, no rig, no material. Do not ship STL for any PubCast asset without a full conversion pipeline. Treat it as raw geometry requiring UV unwrap, texture bake, and GLB export.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AVATARS -->
+  <section>
+    <div class="section-label">Asset Class 01</div>
+    <div class="section-title">Avatars</div>
+
+    <div class="asset-card">
+      <div class="asset-card-header">
+        <div class="asset-card-name">Avatar Tiers</div>
+        <div class="asset-card-desc">Characters that move, rig, and stack in scenes together</div>
+      </div>
+      <div class="asset-card-body">
+        <table class="tier-table">
+          <thead>
+            <tr>
+              <th>Tier</th>
+              <th>Triangles</th>
+              <th>Materials</th>
+              <th>Textures</th>
+              <th>Bones</th>
+              <th>Expected Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Default</td>
+              <td><span class="val-ok">15k – 30k</span></td>
+              <td><span class="val">1 – 2</span></td>
+              <td><span class="val">1k – 2k</span></td>
+              <td><span class="val">89</span></td>
+              <td><span class="val">3 – 6 per scene</span></td>
+            </tr>
+            <tr>
+              <td>Featured</td>
+              <td><span class="val-warn">30k – 60k</span></td>
+              <td><span class="val">2 – 3</span></td>
+              <td><span class="val">2k</span></td>
+              <td><span class="val">89+</span></td>
+              <td><span class="val">1 – 2 per scene</span></td>
+            </tr>
+            <tr>
+              <td>Crowd</td>
+              <td><span class="val-ok">5k – 12k</span></td>
+              <td><span class="val">1</span></td>
+              <td><span class="val">512 – 1k</span></td>
+              <td><span class="val">32 – 50</span></td>
+              <td><span class="val">up to 12 per scene</span></td>
+            </tr>
+            <tr>
+              <td>Background</td>
+              <td><span class="val-ok">2k – 5k</span></td>
+              <td><span class="val">1</span></td>
+              <td><span class="val">512</span></td>
+              <td><span class="val">none / impostor</span></td>
+              <td><span class="val">any</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="card-notes">
+          <div class="note-line">Skeleton standard: 89-bone UE5-compatible rig (Lumen / Azure / Nova presets). Bone names must follow UE5 PascalCase convention for retargeter compatibility.</div>
+          <div class="note-line">Format: GLB with skeleton and idle animation baked in. FBX accepted as source; convert before shipping.</div>
+          <div class="note-line">Transparent layered hair and clothing are expensive. Limit transparency stacking to 1 layer. Hard-surface hair mesh preferred over alpha card sheets.</div>
+          <div class="note-line">If you hesitate before placing a third one, it's already too expensive for default tier.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rules-grid">
+      <div class="rule-block">
+        <div class="rule-block-title">Acceptable</div>
+        <div class="rule-item">Diffuse + normal map per character</div>
+        <div class="rule-item">Single atlas texture covering full body</div>
+        <div class="rule-item">Hard-surface hair mesh</div>
+        <div class="rule-item">Morph targets for facial expression</div>
+        <div class="rule-item">1 material per clothing layer</div>
+      </div>
+      <div class="rule-block">
+        <div class="rule-block-title">Do Not Ship</div>
+        <div class="rule-item no">Over 60k triangles at any tier</div>
+        <div class="rule-item no">More than 3 materials on one avatar</div>
+        <div class="rule-item no">Layered alpha hair cards (3+ layers)</div>
+        <div class="rule-item no">4k textures on default tier</div>
+        <div class="rule-item no">Non-UE5 bone naming conventions</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROPS -->
+  <section>
+    <div class="section-label">Asset Class 02</div>
+    <div class="section-title">Props &amp; Furniture</div>
+
+    <div class="asset-card">
+      <div class="asset-card-header">
+        <div class="asset-card-name">Prop Tiers</div>
+        <div class="asset-card-desc">Objects that live in scenes alongside avatars and sets</div>
+      </div>
+      <div class="asset-card-body">
+        <table class="tier-table">
+          <thead>
+            <tr>
+              <th>Tier</th>
+              <th>Triangles</th>
+              <th>Materials</th>
+              <th>Textures</th>
+              <th>Use Case</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Hero</td>
+              <td><span class="val-warn">2k – 8k</span></td>
+              <td><span class="val">1 – 2</span></td>
+              <td><span class="val">1k – 2k</span></td>
+              <td><span class="val">Close-up, story-critical, frequently seen</span></td>
+            </tr>
+            <tr>
+              <td>Standard</td>
+              <td><span class="val-ok">500 – 2k</span></td>
+              <td><span class="val">1</span></td>
+              <td><span class="val">512 – 1k</span></td>
+              <td><span class="val">Mid-ground, regularly placed</span></td>
+            </tr>
+            <tr>
+              <td>Background</td>
+              <td><span class="val-ok">100 – 500</span></td>
+              <td><span class="val">1</span></td>
+              <td><span class="val">256 – 512</span></td>
+              <td><span class="val">Scene dressing, rarely close</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="card-notes">
+          <div class="note-line">A 40k triangle chair is inexcusable. Standard furniture should be Standard tier or below.</div>
+          <div class="note-line">Hero props should be designated explicitly — not everything gets hero budget. Most props are Standard.</div>
+          <div class="note-line">Destructible props: the voxel baker handles geometry. Triangle budget for baked voxel objects is governed by the Voxel Objects spec below.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SETS -->
+  <section>
+    <div class="section-label">Asset Class 03</div>
+    <div class="section-title">Sets &amp; Environments</div>
+
+    <div class="asset-card">
+      <div class="asset-card-header">
+        <div class="asset-card-name">Environment Tiers</div>
+        <div class="asset-card-desc">Rooms, stages, and backgrounds. Biggest geometry budget, lowest movement cost.</div>
+      </div>
+      <div class="asset-card-body">
+        <table class="tier-table">
+          <thead>
+            <tr>
+              <th>Tier</th>
+              <th>Triangles</th>
+              <th>Materials</th>
+              <th>Textures</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Full Room</td>
+              <td><span class="val-warn">20k – 50k</span></td>
+              <td><span class="val">2 – 4</span></td>
+              <td><span class="val">2k – 4k atlas</span></td>
+              <td><span class="val">Total budget for the entire room geometry</span></td>
+            </tr>
+            <tr>
+              <td>Modular Piece</td>
+              <td><span class="val-ok">500 – 2k</span></td>
+              <td><span class="val">1 – 2</span></td>
+              <td><span class="val">shared atlas</span></td>
+              <td><span class="val">Wall, floor, door, ceiling segment</span></td>
+            </tr>
+            <tr>
+              <td>Skybox / BG</td>
+              <td><span class="val-ok">1k – 5k</span></td>
+              <td><span class="val">1</span></td>
+              <td><span class="val">2k – 4k</span></td>
+              <td><span class="val">Static distant background only</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="card-notes">
+          <div class="note-line">Use texture atlases for sets. Multiple modular pieces sharing one atlas = one draw call. This is where draw call budget is won or lost.</div>
+          <div class="note-line">Static sets have the largest triangle allowance because they are static. Do not waste that allowance on unseen interior faces — cull backfaces at export.</div>
+          <div class="note-line">PubWorld voxel rooms are exempt from this spec — they are governed by the voxel system below.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VOXEL OBJECTS -->
+  <section>
+    <div class="section-label">Asset Class 04</div>
+    <div class="section-title">Voxel Objects (Baked)</div>
+
+    <div class="asset-card">
+      <div class="asset-card-header">
+        <div class="asset-card-name">Voxel Bake Budgets</div>
+        <div class="asset-card-desc">Authored in VoxelStudio, baked to GLB. Triangle count is determined by primitive count × shape complexity.</div>
+      </div>
+      <div class="asset-card-body">
+        <table class="tier-table">
+          <thead>
+            <tr>
+              <th>Class</th>
+              <th>Max Tris (baked)</th>
+              <th>Max Primitives</th>
+              <th>Fragment Limit</th>
+              <th>Example</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Small detail</td>
+              <td><span class="val-ok">&lt; 2k</span></td>
+              <td><span class="val">50</span></td>
+              <td><span class="val">50</span></td>
+              <td><span class="val">Candle, cup, small prop</span></td>
+            </tr>
+            <tr>
+              <td>Medium object</td>
+              <td><span class="val-ok">2k – 10k</span></td>
+              <td><span class="val">200</span></td>
+              <td><span class="val">200</span></td>
+              <td><span class="val">Chair, table, crate</span></td>
+            </tr>
+            <tr>
+              <td>Large structure</td>
+              <td><span class="val-warn">10k – 30k</span></td>
+              <td><span class="val">600</span></td>
+              <td><span class="val">200 max</span></td>
+              <td><span class="val">Arch, column, wall section</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="card-notes">
+          <div class="note-line">Fragment limit at destruction: 200 per object regardless of primitive count. LOD of the authored object determines fragment detail — LOW breaks into big cubes, HIGH shatters into fine wedge and corner pieces.</div>
+          <div class="note-line">Source voxel JSON must be kept alongside every baked GLB. The JSON is the editable source. The GLB is the artifact.</div>
+          <div class="note-line">Large structures should declare pivot groups at authoring time if any section will carry a motion tracker or destruction hinge.</div>
+          <div class="note-line">LOD levels: LOW / LOW-MED / MED / MED-HIGH / HIGH. These are authoring constraints, not render states. Different parts of the same object can use different LOD levels freely.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EFFECTS -->
+  <section>
+    <div class="section-label">Asset Class 05</div>
+    <div class="section-title">Effects &amp; Particles</div>
+
+    <div class="asset-card">
+      <div class="asset-card-header">
+        <div class="asset-card-name">Effects Budget</div>
+        <div class="asset-card-desc">No polygon budget. Draw call and particle count budget instead.</div>
+      </div>
+      <div class="asset-card-body">
+        <table class="tier-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Max Particles</th>
+              <th>Draw Calls</th>
+              <th>Simultaneous</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Ambient / idle</td>
+              <td><span class="val-ok">500 – 1k</span></td>
+              <td><span class="val">1</span></td>
+              <td><span class="val">3 per scene</span></td>
+            </tr>
+            <tr>
+              <td>Action / event</td>
+              <td><span class="val-warn">1k – 5k</span></td>
+              <td><span class="val">1 – 3</span></td>
+              <td><span class="val">2 per scene</span></td>
+            </tr>
+            <tr>
+              <td>Destruction debris</td>
+              <td><span class="val-warn">up to fragment count</span></td>
+              <td><span class="val">1 per object</span></td>
+              <td><span class="val">2 simultaneous explosions</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="card-notes">
+          <div class="note-line">Destruction debris are voxel fragments — geometry, not particles. Fragment persistence is controlled by DestructionProfile.debris_persistence (default 8 seconds).</div>
+          <div class="note-line">Avoid additive blending stacks. One additive layer over opaque is fine. Three additive layers on top of each other is a GPU problem.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- UI -->
+  <section>
+    <div class="section-label">Asset Class 06</div>
+    <div class="section-title">UI Elements</div>
+
+    <div class="asset-card">
+      <div class="asset-card-header">
+        <div class="asset-card-name">UI Asset Rules</div>
+        <div class="asset-card-desc">Almost free in geometry. Expensive if misused.</div>
+      </div>
+      <div class="asset-card-body">
+
+        <div class="rules-grid" style="margin-top:0;">
+          <div class="rule-block">
+            <div class="rule-block-title">Prefer</div>
+            <div class="rule-item">HTML / CSS for all 2D UI</div>
+            <div class="rule-item">SVG for icons and decorative elements</div>
+            <div class="rule-item">CSS transitions over JS animation where possible</div>
+            <div class="rule-item">Under 500 tris for any 3D UI element</div>
+            <div class="rule-item">Single material per UI panel</div>
+          </div>
+          <div class="rule-block">
+            <div class="rule-block-title">Avoid</div>
+            <div class="rule-item no">Transparency stack beyond 2 layers</div>
+            <div class="rule-item no">Per-frame canvas redraws in the render loop</div>
+            <div class="rule-item no">Live shader effects on scrolling text</div>
+            <div class="rule-item no">3D UI elements over 500 tris</div>
+            <div class="rule-item no">Unoptimised font rendering on large blocks</div>
+          </div>
+        </div>
+
+        <div class="card-notes" style="margin-top:0.8rem;">
+          <div class="note-line">UI geometry budget is not shared with scene budget. UI lives in its own render pass. The cost is draw calls and overdraw, not triangles.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GUT CHECK -->
+  <div class="gut-check">
+    <div class="gut-check-title">The Scene Test — Apply to Every Asset</div>
+    <div class="gut-check-text">
+      Before approving any asset for production, place the expected number of them in a working studio scene alongside everything else that would normally be there — characters, set, props, UI, effects. If the scene hesitates, stutters, or you find yourself thinking twice before adding the third one, the asset is too expensive. <strong>Build to leave room.</strong> A beautiful asset that breaks the scene when multiplied is not a production-ready asset.
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-mark">REAR VIEW FORESIGHT LLC · PUBCAST AI · ASSET SPEC v1.0 · 2026</div>
+    <div class="footer-motto">Feic Mo Chroí™</div>
+  </footer>
+
+</div>
+</body>
+</html>
