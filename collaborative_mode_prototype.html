@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Collaborative Mode — Prototype v2</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root{
+  --paper: #f4ead9;
+  --paper-line: #b9c6d8;
+  --ink: #1c1b19;
+  --pencil: #3d3833;
+  --pencil-soft: #6b6459;
+  --manuscript-bg: #fbf7ee;
+  --amber: #c9862f;
+  --amber-glow: rgba(201,134,47,0.55);
+  --panel-border: #d8c9a8;
+  --danger: #9a4b3f;
+  --reading-bg: #efe0c4;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:#e9ddc4;
+  font-family:'Source Serif 4', serif;
+  color:var(--ink);
+  display:flex;
+  justify-content:center;
+  padding:28px 16px 60px;
+}
+.app{ width:100%; max-width:820px; }
+.header{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px; }
+.header h1{ font-size:19px; font-weight:600; margin:0; }
+.header .sub{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--pencil-soft); text-transform:uppercase; letter-spacing:0.08em; }
+.skeleton{
+  background:var(--manuscript-bg); border:1px solid var(--panel-border); border-radius:3px;
+  padding:10px 14px; margin-bottom:18px; font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--pencil-soft);
+}
+.skeleton b{ color:var(--ink); font-weight:600; }
+
+.frame{
+  border:1px solid var(--panel-border); border-radius:4px; overflow:hidden;
+  box-shadow:0 12px 30px -18px rgba(0,0,0,0.45); background:var(--manuscript-bg);
+}
+
+/* ---- MANUSCRIPT (top, finalized) ---- */
+.zone-label{
+  font-family:'IBM Plex Mono', monospace; font-size:9px; letter-spacing:0.1em; text-transform:uppercase;
+  padding:6px 14px 2px; color:var(--pencil-soft); background:inherit;
+}
+.manuscript{ background:var(--manuscript-bg); padding:6px 30px 18px; min-height:70px; max-height:260px; overflow-y:auto; }
+.manuscript-empty{ color:var(--pencil-soft); font-style:italic; font-size:14px; padding:0 6px; }
+.para{
+  font-size:16.5px; line-height:1.75; margin:0 0 12px; padding:4px 8px; border-radius:3px;
+  cursor:pointer; transition:background 0.15s ease; position:relative;
+}
+.para:hover{ background:rgba(201,134,47,0.08); }
+.para.unlocked{ background:rgba(201,134,47,0.12); outline:1px dashed var(--amber); }
+.para .unlock-tag{
+  position:absolute; right:8px; top:-9px; font-family:'IBM Plex Mono', monospace; font-size:9px;
+  letter-spacing:0.06em; text-transform:uppercase; background:var(--amber); color:#fff; padding:2px 6px;
+  border-radius:2px; opacity:0; transition:opacity 0.15s ease;
+}
+.para:hover .unlock-tag{ opacity:1; }
+.para textarea{ width:100%; font:inherit; font-size:16.5px; line-height:1.75; border:none; background:transparent; resize:vertical; outline:none; }
+
+/* ---- THRESHOLD ---- */
+.threshold{
+  position:relative; height:24px;
+  background:linear-gradient(180deg, var(--manuscript-bg) 0%, var(--paper) 100%);
+  border-top:1px solid rgba(28,27,25,0.15); border-bottom:1px solid rgba(28,27,25,0.15);
+}
+.threshold.active{ box-shadow:0 0 22px 4px var(--amber-glow) inset; }
+.threshold .label{
+  position:absolute; left:14px; top:4px; font-family:'IBM Plex Mono', monospace; font-size:9px;
+  letter-spacing:0.1em; text-transform:uppercase; color:var(--amber);
+}
+
+/* ---- BUFFER ZONE (recently read, editable) ---- */
+.buffer-zone{
+  background:
+    repeating-linear-gradient(0deg, transparent, transparent 27px, var(--paper-line) 28px),
+    var(--paper);
+  padding:8px 30px 14px; min-height:150px;
+}
+.buffer-line{
+  font-family:'Kalam', cursive; font-size:18px; line-height:28px; color:var(--pencil);
+  padding:0 6px; border-radius:3px; cursor:pointer; transition:background 0.15s ease;
+}
+.buffer-line:hover{ background:rgba(201,134,47,0.12); }
+.buffer-line.editing textarea{
+  width:100%; font-family:'Kalam', cursive; font-size:18px; line-height:28px;
+  background:rgba(255,255,255,0.7); border:1px dashed var(--pencil-soft); border-radius:3px;
+  padding:0 4px; color:var(--pencil); resize:none; outline:none;
+}
+.edit-controls{ display:flex; gap:8px; margin:4px 6px 10px; }
+.edit-controls button{ font-size:11px; padding:4px 10px; }
+.buffer-empty{ font-family:'Kalam', cursive; color:var(--pencil-soft); font-size:15px; padding:0 6px; }
+
+/* ---- READING LINE (bottom, active, single line) ---- */
+.reading-strip{
+  border-top:2px solid var(--ink);
+  background:#e4d5b3;
+  padding:12px 30px 14px;
+}
+.reading-zone-label{
+  font-family:'IBM Plex Mono', monospace; font-size:9px; letter-spacing:0.1em; text-transform:uppercase;
+  color:var(--pencil-soft); margin-bottom:6px;
+}
+.reading-line{
+  font-family:'Kalam', cursive; font-size:19px; line-height:1.5; color:var(--pencil);
+  padding:4px 8px; border-radius:3px; cursor:pointer;
+  background-image:linear-gradient(to right, var(--amber-glow), var(--amber-glow));
+  background-repeat:no-repeat; background-size:0% 100%;
+}
+.reading-line.sweeping{ animation-name:sweep; animation-timing-function:linear; animation-fill-mode:forwards; }
+@keyframes sweep{ from{ background-size:0% 100%; } to{ background-size:100% 100%; } }
+.reading-line.editing textarea{
+  width:100%; font-family:'Kalam', cursive; font-size:19px; line-height:1.5; background:rgba(255,255,255,0.7);
+  border:1px dashed var(--pencil-soft); border-radius:3px; padding:4px 8px; color:var(--pencil); resize:none; outline:none;
+}
+.reading-empty{ font-family:'Kalam', cursive; color:var(--pencil-soft); font-size:15px; padding:4px 8px; }
+
+.controls{
+  display:flex; align-items:center; gap:14px; padding:12px 16px; background:#efe4cc;
+  border-top:1px solid var(--panel-border); font-family:'IBM Plex Mono', monospace; font-size:11px;
+}
+button{
+  font-family:'IBM Plex Mono', monospace; font-size:12px; border:1px solid var(--ink);
+  background:var(--ink); color:#fff; padding:7px 14px; border-radius:3px; cursor:pointer; letter-spacing:0.03em;
+}
+button.secondary{ background:transparent; color:var(--ink); }
+button:disabled{ opacity:0.35; cursor:default; }
+button:active:not(:disabled){ transform:translateY(1px); }
+.speed-wrap{ display:flex; align-items:center; gap:8px; margin-left:auto; }
+.speed-wrap input[type=range]{ width:110px; }
+.status-dot{ width:7px;height:7px;border-radius:50%; background:var(--pencil-soft); display:inline-block; margin-right:4px; }
+.status-dot.playing{ background:#3d7a4a; }
+.status-dot.paused{ background:var(--amber); }
+.regen-flag{
+  font-family:'IBM Plex Mono', monospace; font-size:10px; color:var(--danger);
+  letter-spacing:0.05em; margin:2px 6px 8px;
+}
+.note{ margin-top:14px; font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:var(--pencil-soft); line-height:1.6; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="header">
+    <h1>Collaborative Mode</h1>
+    <span class="sub">v2 · reading line → buffer → manuscript</span>
+  </div>
+
+  <div class="skeleton">
+    <b>Skeleton:</b> Repeat and Sahira are finishing a conversation at the diner. She hands him the envelope. He decides to leave for the docks — but not yet. → destination: he ends the scene with the envelope in his pocket, still at the table.
+  </div>
+
+  <div class="frame">
+    <div class="zone-label">Manuscript — finalized, click a paragraph to unlock</div>
+    <div class="manuscript" id="manuscript"></div>
+
+    <div class="threshold" id="threshold"><span class="label">commits above this line</span></div>
+
+    <div class="zone-label">Buffer zone — already read, still editable, click any line</div>
+    <div class="buffer-zone" id="bufferZone"></div>
+
+    <div class="reading-strip">
+      <div class="reading-zone-label">Now reading — click to interrupt &amp; edit</div>
+      <div id="readingLine"></div>
+    </div>
+
+    <div class="controls">
+      <button id="playBtn">▶ Play</button>
+      <button id="restartBtn" class="secondary">⟲ Restart demo</button>
+      <span><span class="status-dot" id="statusDot"></span><span id="statusText">idle</span></span>
+      <div class="speed-wrap">
+        <span>read speed</span>
+        <input type="range" id="speed" min="1" max="5" value="3">
+      </div>
+      <span id="branchLabel" style="color:var(--pencil-soft);">branch: original</span>
+    </div>
+  </div>
+
+  <div class="note">
+    Flow: new text appears on the "now reading" line at the bottom and lights up left-to-right as it's spoken.
+    Once fully read, it moves up into the buffer zone (pencil, lined paper) — visible, still yours to edit.
+    When the buffer zone is full, its oldest line crosses the threshold into the finalized manuscript.
+    Click any line (reading or buffered) to pause and edit it directly — everything after it regenerates.
+    Click a committed paragraph up top to unlock and revise it explicitly.
+  </div>
+</div>
+
+<script>
+const SCENE = [
+  "The rain kept tapping the window in that slow, deliberate rhythm.",
+  "Sahira slid the envelope across the table without looking up.",
+  "\"You don't have to open it here,\" she said.",
+  "Repeat turned it over once, feeling the weight of whatever was inside.",
+  "\"I know,\" he said. \"I'm going to anyway.\"",
+  "He peeled back the flap slowly, like it might still change its mind.",
+  "The paper inside was thinner than he expected.",
+  "For a second neither of them said anything at all.",
+  "Then he folded it back along its original crease.",
+  "\"Okay,\" he said. \"Okay. I believe you.\"",
+  "He tucked the envelope into his jacket pocket, close to his chest.",
+  "The diner's fluorescent lights buzzed faintly overhead.",
+  "Sahira watched him with an expression he couldn't quite name.",
+  "\"You're not going to say anything else?\" she asked.",
+  "\"Not yet,\" he said. \"Not until I know it's real.\"",
+  "The waitress refilled coffee neither of them had asked for.",
+  "Outside, the rain hadn't let up, and neither had the quiet between them."
+];
+const ALT_DOCKS = [
+  "He pushed the chair back and stood before she could answer.",
+  "\"I'm not waiting on this one,\" he said, already reaching for his coat.",
+  "The docks weren't far, and the envelope wasn't getting lighter in his pocket.",
+  "Sahira called after him but the door had already swung shut.",
+  "Rain hit him the second he stepped outside, cold and immediate.",
+  "He didn't look back at the diner window."
+];
+const ALT_GENERIC = [
+  "\"Say something else, then,\" she said, quieter now.",
+  "He turned the salt shaker over in his fingers instead of answering.",
+  "\"You always do this,\" she said. \"Go quiet right when it matters.\"",
+  "He looked up at her, finally, and there wasn't anything guarded left in it.",
+  "\"I'm not going quiet,\" he said. \"I'm just done guessing what you need me to say.\"",
+  "The rain outside had eased into something softer, almost polite about it."
+];
+// Branches we can pivot to on edit, so a regeneration is always visibly different
+// regardless of which keyword (if any) the edit contains.
+const BRANCHES = { docks: ALT_DOCKS, generic: ALT_GENERIC, original: SCENE };
+let currentBranch = 'original';
+
+let pool = SCENE.slice();
+let pointer = 0;
+let committed = [];      // strings, finalized manuscript paragraphs
+let buffer = [];         // strings, oldest first — recently read, still editable
+let reading = null;      // { text } currently being "spoken", or null
+let playing = false;
+let interval = null;
+let editingTarget = null; // { type:'reading' } | { type:'buffer', index }
+let unlockedParaIndex = null;
+
+const BUFFER_SIZE = 5;
+const SPEED_MS = {1:2600, 2:2000, 3:1500, 4:1000, 5:650};
+
+const manuscriptEl = document.getElementById('manuscript');
+const bufferEl = document.getElementById('bufferZone');
+const readingEl = document.getElementById('readingLine');
+const threshEl = document.getElementById('threshold');
+const playBtn = document.getElementById('playBtn');
+const restartBtn = document.getElementById('restartBtn');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const speedInput = document.getElementById('speed');
+
+function render(){
+  // manuscript
+  manuscriptEl.innerHTML = '';
+  if(committed.length === 0){
+    manuscriptEl.innerHTML = '<div class="manuscript-empty">Nothing finalized yet — hit play.</div>';
+  } else {
+    committed.forEach((text, i) => {
+      const div = document.createElement('div');
+      div.className = 'para' + (unlockedParaIndex === i ? ' unlocked' : '');
+      if(unlockedParaIndex === i){
+        div.innerHTML = `<textarea rows="2">${text}</textarea>
+          <div class="edit-controls">
+            <button data-save-para="${i}">Save</button>
+            <button data-cancel-para="${i}" class="secondary">Cancel</button>
+          </div>`;
+      } else {
+        div.innerHTML = `<span class="unlock-tag">click to unlock</span>${text}`;
+        div.onclick = () => { unlockedParaIndex = i; render(); };
+      }
+      manuscriptEl.appendChild(div);
+    });
+    manuscriptEl.scrollTop = manuscriptEl.scrollHeight;
+  }
+  manuscriptEl.querySelectorAll('[data-save-para]').forEach(btn=>{
+    btn.onclick = () => {
+      const i = parseInt(btn.getAttribute('data-save-para'));
+      const ta = btn.closest('.para').querySelector('textarea');
+      committed[i] = ta.value;
+      unlockedParaIndex = null;
+      render();
+    };
+  });
+  manuscriptEl.querySelectorAll('[data-cancel-para]').forEach(btn=>{
+    btn.onclick = () => { unlockedParaIndex = null; render(); };
+  });
+
+  // buffer zone
+  bufferEl.innerHTML = '';
+  if(buffer.length === 0){
+    bufferEl.innerHTML = '<div class="buffer-empty">— nothing read into the buffer yet —</div>';
+  } else {
+    buffer.forEach((text, i) => {
+      const isEditing = editingTarget && editingTarget.type === 'buffer' && editingTarget.index === i;
+      const div = document.createElement('div');
+      div.className = 'buffer-line' + (isEditing ? ' editing' : '');
+      if(isEditing){
+        div.innerHTML = `<textarea rows="2">${text}</textarea>
+          <div class="edit-controls">
+            <button data-save-buf="${i}">Save &amp; regenerate forward</button>
+            <button data-cancel-buf="${i}" class="secondary">Cancel</button>
+          </div>`;
+      } else {
+        div.textContent = text;
+        div.onclick = () => { pauseForEdit(); editingTarget = { type:'buffer', index:i }; render(); focusEditor(); };
+      }
+      bufferEl.appendChild(div);
+    });
+  }
+  bufferEl.querySelectorAll('[data-save-buf]').forEach(btn=>{
+    btn.onclick = () => {
+      const i = parseInt(btn.getAttribute('data-save-buf'));
+      const ta = btn.closest('.buffer-line').querySelector('textarea');
+      commitBufferEdit(i, ta.value);
+    };
+  });
+  bufferEl.querySelectorAll('[data-cancel-buf]').forEach(btn=>{
+    btn.onclick = () => { editingTarget = null; render(); };
+  });
+
+  // reading line
+  readingEl.innerHTML = '';
+  const isEditingReading = editingTarget && editingTarget.type === 'reading';
+  if(!reading && !isEditingReading){
+    readingEl.innerHTML = '<div class="reading-empty">— waiting —</div>';
+  } else if(isEditingReading){
+    const div = document.createElement('div');
+    div.className = 'reading-line editing';
+    div.innerHTML = `<textarea rows="2">${reading ? reading.text : ''}</textarea>
+      <div class="edit-controls">
+        <button data-save-reading="1">Save &amp; regenerate forward</button>
+        <button data-cancel-reading="1" class="secondary">Cancel</button>
+      </div>`;
+    readingEl.appendChild(div);
+  } else {
+    const div = document.createElement('div');
+    div.className = 'reading-line' + (playing ? ' sweeping' : '');
+    div.style.animationDuration = SPEED_MS[speedInput.value] + 'ms';
+    div.textContent = reading.text;
+    div.onclick = () => { pauseForEdit(); editingTarget = { type:'reading' }; render(); focusEditor(); };
+    readingEl.appendChild(div);
+  }
+  const saveReadingBtn = readingEl.querySelector('[data-save-reading]');
+  if(saveReadingBtn){
+    saveReadingBtn.onclick = () => {
+      const ta = readingEl.querySelector('textarea');
+      commitReadingEdit(ta.value);
+    };
+  }
+  const cancelReadingBtn = readingEl.querySelector('[data-cancel-reading]');
+  if(cancelReadingBtn){ cancelReadingBtn.onclick = () => { editingTarget = null; render(); }; }
+
+  threshEl.classList.toggle('active', buffer.length >= BUFFER_SIZE);
+  statusDot.className = 'status-dot ' + (playing ? 'playing' : ((buffer.length||committed.length||reading) ? 'paused' : ''));
+  statusText.textContent = playing ? 'reading…' : ((buffer.length||committed.length||reading) ? 'paused' : 'idle');
+}
+
+function focusEditor(){
+  const ta = document.querySelector('textarea');
+  if(ta){ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+function pauseForEdit(){
+  if(playing) stopPlaying();
+}
+
+function flashRegen(container){
+  const flag = document.createElement('div');
+  flag.className = 'regen-flag';
+  flag.textContent = '↻ regenerating forward from your edit…';
+  container.prepend(flag);
+  setTimeout(()=>{ flag.remove(); }, 900);
+}
+
+function flashNoop(container){
+  const flag = document.createElement('div');
+  flag.className = 'regen-flag';
+  flag.style.color = '#3d7a4a';
+  flag.textContent = '✓ minor edit — rest of the scene still holds, nothing downstream touched';
+  container.prepend(flag);
+  setTimeout(()=>{ flag.remove(); }, 1400);
+}
+
+// Decides whether an edit actually invalidates what comes after it, vs. just
+// swapping a word/phrase that leaves the scene's trajectory intact. This is
+// the check that stops stale downstream dialogue from "forcing its way back
+// in" after an edit that changed direction, while NOT nuking everything
+// downstream over a harmless word swap.
+function isStructuralEdit(oldText, newText){
+  if(oldText.trim() === newText.trim()) return false;
+  if(/dock|leav|stand|walk out|coat|actually|instead|wait[,.]|no[,.] |not\b/i.test(newText)) return true;
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9' ]/g,'').split(/\s+/).filter(Boolean);
+  const oldWords = norm(oldText), newWords = norm(newText);
+  const oldSet = new Set(oldWords);
+  const shared = newWords.filter(w => oldSet.has(w)).length;
+  const overlap = shared / Math.max(newWords.length, 1);
+  const lenDelta = Math.abs(oldWords.length - newWords.length) / Math.max(oldWords.length, newWords.length, 1);
+  return overlap < 0.55 || lenDelta > 0.4;
+}
+
+function rerouteIfTriggered(text){
+  // Called only when an edit IS structural (see isStructuralEdit). Picks a
+  // branch different from the one currently playing so the continuation is
+  // visibly new, rather than letting the old, now-inconsistent pool keep going.
+  let target;
+  if(/dock|leav|stand|walk out|coat/i.test(text)){
+    target = 'docks';
+  } else if(currentBranch === 'original'){
+    target = 'generic';
+  } else {
+    target = currentBranch === 'docks' ? 'generic' : 'docks';
+  }
+  currentBranch = target;
+  pool = BRANCHES[target].slice();
+  pointer = 0;
+  updateBranchLabel();
+}
+
+function updateBranchLabel(){
+  const el = document.getElementById('branchLabel');
+  if(el) el.textContent = 'branch: ' + currentBranch;
+}
+
+function commitBufferEdit(i, newText){
+  const oldText = buffer[i];
+  const structural = isStructuralEdit(oldText, newText);
+  buffer[i] = newText;
+  if(structural){
+    // Drop everything downstream of the edit — it was written assuming the
+    // old text and can no longer be trusted to fit.
+    buffer = buffer.slice(0, i + 1);
+    reading = null;
+    rerouteIfTriggered(newText);
+    flashRegen(bufferEl);
+  } else {
+    // Downstream content still makes sense; leave the buffer and reading
+    // line exactly as they were — no wasted regeneration.
+    flashNoop(bufferEl);
+  }
+  editingTarget = null;
+  render();
+}
+
+function commitReadingEdit(newText){
+  const oldText = reading ? reading.text : '';
+  const structural = isStructuralEdit(oldText, newText);
+  reading = { text: newText };
+  if(structural){
+    rerouteIfTriggered(newText);
+    flashRegen(readingEl);
+  } else {
+    flashNoop(readingEl);
+  }
+  editingTarget = null;
+  render();
+}
+
+
+function tick(){
+  // 1. finalize whatever was reading into the buffer zone
+  if(reading){
+    buffer.push(reading.text);
+    reading = null;
+    if(buffer.length > BUFFER_SIZE){
+      committed.push(buffer.shift());
+    }
+  }
+  // 2. pull the next line into the reading slot
+  if(pointer < pool.length){
+    reading = { text: pool[pointer] };
+    pointer++;
+  } else if(buffer.length === 0){
+    stopPlaying();
+  }
+  render();
+}
+
+function startPlaying(){
+  if(playing) return;
+  playing = true;
+  playBtn.textContent = '⏸ Pause';
+  interval = setInterval(tick, SPEED_MS[speedInput.value]);
+  if(!reading && pointer < pool.length) tick(); // kick off immediately instead of waiting a full cycle
+  render();
+}
+function stopPlaying(){
+  playing = false;
+  playBtn.textContent = '▶ Play';
+  clearInterval(interval);
+  render();
+}
+
+playBtn.onclick = () => playing ? stopPlaying() : startPlaying();
+restartBtn.onclick = () => {
+  stopPlaying();
+  pool = SCENE.slice(); pointer = 0; currentBranch = 'original';
+  committed = []; buffer = []; reading = null; editingTarget = null; unlockedParaIndex = null;
+  updateBranchLabel();
+  render();
+};
+speedInput.onchange = () => {
+  if(playing){ clearInterval(interval); interval = setInterval(tick, SPEED_MS[speedInput.value]); }
+};
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PubCast Control Room - Polygonal Tray Interface</title>
+  <style>
+    :root {
+      --obsidian-bg: #0a0a0c;
+      --smoked-glass: rgba(18, 18, 26, 0.88);
+      --gatsby-gold: #d4af37;
+      --gatsby-champagne: #f3e5ab;
+      --tech-noir-cyan: #00f0ff;
+      --tech-noir-magenta: #ff007f;
+      --lcars-orange: #ff9900;
+      --lcars-purple: #cc99cc;
+      --lcars-blue: #9999cc;
+      --raw-copper: #b87333;
+      --solder-silver: #a8a8a8;
+      --status-active: #00ff66;
+      --status-degraded: #ffcc00;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--obsidian-bg);
+      color: #e0e0e0;
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #app-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: radial-gradient(circle at 50% 50%, #14141e 0%, #08080a 100%);
+    }
+
+    svg#mesh-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Individual Tray Styles */
+    .polygonal-tray {
+      position: absolute;
+      background: var(--smoked-glass);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--gatsby-gold);
+      box-shadow: 0 0 15px rgba(212, 175, 55, 0.2), inset 0 0 10px rgba(0, 240, 255, 0.05);
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      z-index: 1;
+      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+      cursor: grab;
+    }
+
+    .polygonal-tray:active {
+      cursor: grabbing;
+    }
+
+    .polygonal-tray:hover {
+      border-color: var(--tech-noir-cyan);
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.4), inset 0 0 15px rgba(0, 240, 255, 0.1);
+    }
+
+    /* LCARS-style Chamfer Header */
+    .tray-header {
+      background: linear-gradient(90deg, var(--lcars-orange) 0%, var(--lcars-purple) 70%, transparent 100%);
+      color: #000;
+      font-weight: 800;
+      font-size: 0.85rem;
+      letter-spacing: 1.5px;
+      padding: 6px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      text-transform: uppercase;
+      clip-path: polygon(0 0, 100% 0, 95% 100%, 0 100%);
+      cursor: move;
+    }
+
+    .tray-status-pill {
+      background: #000;
+      color: var(--status-active);
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      font-family: monospace;
+      font-weight: bold;
+      border: 1px solid var(--status-active);
+    }
+
+    .tray-content {
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Module Specific Layouts */
+    .viewport-box {
+      width: 100%;
+      height: 220px;
+      background: #000;
+      border: 1px solid var(--tech-noir-cyan);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      background-size: cover;
+    }
+
+    .viewport-overlay-text {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      font-family: monospace;
+      color: var(--tech-noir-cyan);
+      font-size: 0.8rem;
+      background: rgba(0,0,0,0.7);
+      padding: 4px 8px;
+    }
+
+    .control-btn-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn-gatsby {
+      background: transparent;
+      border: 1px solid var(--gatsby-gold);
+      color: var(--gatsby-champagne);
+      padding: 8px 14px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      letter-spacing: 1px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.2s ease;
+    }
+
+    .btn-gatsby:hover {
+      background: var(--gatsby-gold);
+      color: #000;
+      box-shadow: 0 0 10px var(--gatsby-gold);
+    }
+
+    /* Reshape / Resize Handle */
+    .resize-handle {
+      position: absolute;
+      right: 2px;
+      bottom: 2px;
+      width: 14px;
+      height: 14px;
+      background: var(--gatsby-gold);
+      clip-path: polygon(100% 0, 100% 100%, 0 100%);
+      cursor: se-resize;
+      z-index: 20;
+    }
+
+    /* Telemetry / Log Feed */
+    .log-feed {
+      background: rgba(0,0,0,0.8);
+      border: 1px solid rgba(212, 175, 55, 0.3);
+      padding: 8px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #a8a8a8;
+      height: 100%;
+      overflow-y: scroll;
+    }
+
+    .log-line {
+      margin-bottom: 4px;
+      line-height: 1.2;
+    }
+
+    .log-line.active { color: var(--status-active); }
+    .log-line.info { color: var(--tech-noir-cyan); }
+    .log-line.warning { color: var(--status-degraded); }
+
+    /* Copper Wire Traces Overlay */
+    .copper-trace {
+      stroke: var(--raw-copper);
+      stroke-width: 2;
+      fill: none;
+      stroke-dasharray: 4;
+    }
+
+    .solder-joint {
+      fill: var(--solder-silver);
+      stroke: var(--raw-copper);
+      stroke-width: 1.5;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app-container">
+  <!-- SVG Overlay for Copper Traces & Shared Polygonal Lines -->
+  <svg id="mesh-overlay">
+    <path id="trace-1" class="copper-trace" d="M 640 180 L 680 180 L 680 320 L 720 320" />
+    <path id="trace-2" class="copper-trace" d="M 350 480 L 350 520 L 720 520" />
+    <circle id="joint-1" class="solder-joint" cx="640" cy="180" r="4" />
+    <circle id="joint-2" class="solder-joint" cx="720" cy="320" r="4" />
+    <circle id="joint-3" class="solder-joint" cx="350" cy="480" r="4" />
+  </svg>
+
+  <!-- Tray 1: Live Viewport & Switcher -->
+  <div class="polygonal-tray" id="tray-viewport" style="top: 20px; left: 20px; width: 620px; height: 440px;">
+    <div class="tray-header" id="header-viewport">
+      <span>01 // LIVE VIEWPORT & CAMERA SWITCHER</span>
+      <span class="tray-status-pill" id="status-viewport">ACTIVE (PROGRAM)</span>
+    </div>
+    <div class="tray-content">
+      <div class="viewport-box">
+        <div class="viewport-overlay-text" id="viewport-cam-label">CAM_01: VOXEL_ENGINE_TWIN_CORE (60 FPS)</div>
+      </div>
+      <div class="control-btn-group">
+        <button class="btn-gatsby" onclick="switchCamera(1)">CUT CAM 1</button>
+        <button class="btn-gatsby" onclick="switchCamera(2)">CUT CAM 2</button>
+        <button class="btn-gatsby" onclick="autoTransition()">AUTO TRANSITION</button>
+        <button class="btn-gatsby" id="rec-btn" style="border-color: var(--tech-noir-magenta); color: var(--tech-noir-magenta);" onclick="toggleRecording()">REC START</button>
+      </div>
+    </div>
+    <div class="resize-handle" onmousedown="startResizing(event, 'tray-viewport')"></div>
+  </div>
+
+  <!-- Tray 2: Passkey Gate & Security Boundary -->
+  <div class="polygonal-tray" id="tray-security" style="top: 20px; left: 660px; width: 440px; height: 260px;">
+    <div class="tray-header" id="header-security">
+      <span>02 // PASSKEY GATE & AUTHORITY</span>
+      <span class="tray-status-pill" id="status-security">ENFORCED</span>
+    </div>
+    <div class="tray-content">
+      <div style="font-size: 0.8rem; color: var(--gatsby-champagne);" id="sec-level-label">AUTHORITY BOUNDARY: LEVEL 4 (MASTER)</div>
+      <div style="font-family: monospace; font-size: 0.75rem; color: #888;" id="sec-key-label">PASSKEY_ID: 0x9f884a2...</div>
+      <div class="control-btn-group" style="margin-top: 10px;">
+        <button class="btn-gatsby" onclick="verifyBiometric()">VERIFY BIOMETRIC</button>
+        <button class="btn-gatsby" onclick="rekeySession()">RE-KEY SESSION</button>
+      </div>
+    </div>
+    <div class="resize-handle" onmousedown="startResizing(event, 'tray-security')"></div>
+  </div>
+
+  <!-- Tray 3: Telemetry & Audit Log -->
+  <div class="polygonal-tray" id="tray-telemetry" style="top: 300px; left: 660px; width: 440px; height: 380px;">
+    <div class="tray-header" id="header-telemetry">
+      <span>03 // TELEMETRY & SYSTEM LOG</span>
+      <span class="tray-status-pill">STREAMING</span>
+    </div>
+    <div class="tray-content">
+      <div class="log-feed" id="log-feed-box">
+        <div class="log-line info">[08:50:28] VoxelBridge initialized with twin-core engine.</div>
+        <div class="log-line active">[08:50:30] SwitcherStore state hydrated from disk.</div>
+        <div class="log-line info">[08:50:32] Passkey Gate state verified: ENFORCED.</div>
+        <div class="log-line warning">[08:50:35] Recording path initialized in /working_dir/c_b378f9568f72f835/downloads</div>
+        <div class="log-line active">[08:50:40] Polygonal Tray Mesh layout synchronized (60FPS).</div>
+      </div>
+    </div>
+    <div class="resize-handle" onmousedown="startResizing(event, 'tray-telemetry')"></div>
+  </div>
+
+  <!-- Tray 4: Asset Manager & Files -->
+  <div class="polygonal-tray" id="tray-assets" style="top: 480px; left: 20px; width: 620px; height: 200px;">
+    <div class="tray-header" id="header-assets">
+      <span>04 // ASSETS & RECORDING LIBRARY</span>
+      <span class="tray-status-pill">3 FILES</span>
+    </div>
+    <div class="tray-content">
+      <div style="font-size: 0.8rem; font-family: monospace;" id="asset-list-box">
+        • one_night_code_run.txt (153 KB) [LOADED]<br>
+        • Pubcast_V10_Camera_Pass.mp4 (48 MB) [READY]<br>
+        • Telemetry_Snapshot_20260805.json (12 KB) [PERSISTED]
+      </div>
+    </div>
+    <div class="resize-handle" onmousedown="startResizing(event, 'tray-assets')"></div>
+  </div>
+
+</div>
+
+<script>
+  let isRecording = false;
+
+  function addLog(msg, type='info') {
+    const box = document.getElementById('log-feed-box');
+    const time = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = `log-line ${type}`;
+    div.textContent = `[${time}] ${msg}`;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function switchCamera(camNum) {
+    document.getElementById('viewport-cam-label').textContent = `CAM_0${camNum}: VOXEL_ENGINE_CORE_${camNum} (60 FPS)`;
+    addLog(`Camera switched to CAM_0${camNum}`, 'active');
+  }
+
+  function autoTransition() {
+    addLog("Auto transition triggered between Program and Preview channels.", "info");
+  }
+
+  function toggleRecording() {
+    isRecording = !isRecording;
+    const btn = document.getElementById('rec-btn');
+    if (isRecording) {
+      btn.textContent = 'REC STOP';
+      btn.style.borderColor = '#00ff66';
+      btn.style.color = '#00ff66';
+      addLog("Recording STARTED -> Writing stream to downloads/", "warning");
+    } else {
+      btn.textContent = 'REC START';
+      btn.style.borderColor = 'var(--tech-noir-magenta)';
+      btn.style.color = 'var(--tech-noir-magenta)';
+      addLog("Recording STOPPED & Persisted to disk.", "active");
+    }
+  }
+
+  function verifyBiometric() {
+    document.getElementById('status-security').textContent = 'VERIFIED';
+    document.getElementById('status-security').style.borderColor = '#00ff66';
+    document.getElementById('status-security').style.color = '#00ff66';
+    addLog("Biometric Passkey Challenge PASSED (Authority Level 4 Authorized).", "active");
+  }
+
+  function rekeySession() {
+    const newKey = "0x" + Math.random().toString(16).substring(2, 10) + "...";
+    document.getElementById('sec-key-label').textContent = `PASSKEY_ID: ${newKey}`;
+    addLog(`Security Session re-keyed. New PASSKEY_ID: ${newKey}`, "info");
+  }
+
+  // Draggable and Resizable Tray Mesh Engine Logic
+  let activeElement = null;
+  let offsetX = 0, offsetY = 0;
+  let isResizing = false;
+
+  document.querySelectorAll('.tray-header').forEach(header => {
+    header.addEventListener('mousedown', (e) => {
+      activeElement = header.parentElement;
+      isResizing = false;
+      offsetX = e.clientX - activeElement.offsetLeft;
+      offsetY = e.clientY - activeElement.offsetTop;
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  });
+
+  function startResizing(e, trayId) {
+    e.stopPropagation();
+    activeElement = document.getElementById(trayId);
+    isResizing = true;
+    offsetX = e.clientX;
+    offsetY = e.clientY;
+    activeElement.startW = activeElement.offsetWidth;
+    activeElement.startH = activeElement.offsetHeight;
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }
+
+  function onMouseMove(e) {
+    if (!activeElement) return;
+    if (isResizing) {
+      const newW = Math.max(200, activeElement.startW + (e.clientX - offsetX));
+      const newH = Math.max(120, activeElement.startH + (e.clientY - offsetY));
+      activeElement.style.width = newW + 'px';
+      activeElement.style.height = newH + 'px';
+    } else {
+      activeElement.style.left = (e.clientX - offsetX) + 'px';
+      activeElement.style.top = (e.clientY - offsetY) + 'px';
+    }
+    updateCopperTraces();
+  }
+
+  function onMouseUp() {
+    if (activeElement) {
+      persistLayout();
+      addLog(`Tray ${activeElement.id} repositioned/reformed.`, "info");
+    }
+    activeElement = null;
+    isResizing = false;
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+  }
+
+  function updateCopperTraces() {
+    const t1 = document.getElementById('tray-viewport');
+    const t2 = document.getElementById('tray-security');
+    const t3 = document.getElementById('tray-telemetry');
+    const t4 = document.getElementById('tray-assets');
+
+    if (!t1 || !t2 || !t3 || !t4) return;
+
+    const c1 = { x: t1.offsetLeft + t1.offsetWidth, y: t1.offsetTop + 160 };
+    const c2 = { x: t2.offsetLeft, y: t2.offsetTop + 160 };
+    const c3 = { x: t4.offsetLeft + 300, y: t4.offsetTop };
+    const c4 = { x: t3.offsetLeft + 100, y: t3.offsetTop };
+
+    document.getElementById('trace-1').setAttribute('d', `M ${c1.x} ${c1.y} L ${(c1.x+c2.x)/2} ${c1.y} L ${(c1.x+c2.x)/2} ${c2.y} L ${c2.x} ${c2.y}`);
+    document.getElementById('joint-1').setAttribute('cx', c1.x);
+    document.getElementById('joint-1').setAttribute('cy', c1.y);
+    document.getElementById('joint-2').setAttribute('cx', c2.x);
+    document.getElementById('joint-2').setAttribute('cy', c2.y);
+
+    document.getElementById('trace-2').setAttribute('d', `M ${c3.x} ${c3.y} L ${c3.x} ${(c3.y+c4.y)/2} L ${c4.x} ${(c3.y+c4.y)/2} L ${c4.x} ${c4.y}`);
+    document.getElementById('joint-3').setAttribute('cx', c3.x);
+    document.getElementById('joint-3').setAttribute('cy', c3.y);
+  }
+
+  async function persistLayout() {
+    const trays = [];
+    document.querySelectorAll('.polygonal-tray').forEach(el => {
+      trays.push({
+        id: el.id,
+        title: el.querySelector('.tray-header span').textContent,
+        vertices: [
+          { x: el.offsetLeft, y: el.offsetTop },
+          { x: el.offsetLeft + el.offsetWidth, y: el.offsetTop },
+          { x: el.offsetLeft + el.offsetWidth, y: el.offsetTop + el.offsetHeight },
+          { x: el.offsetLeft, y: el.offsetTop + el.offsetHeight }
+        ],
+        module_type: "polygonal_tray",
+        status: "ACTIVE"
+      });
+    });
+
+    try {
+      await fetch('/api/layout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trays: trays })
+      });
+    } catch (e) {
+      console.log('Layout persist error:', e);
+    }
+  }
+
+  window.onload = () => {
+    updateCopperTraces();
+  };
+</script>
+
+</body>
+</html>
