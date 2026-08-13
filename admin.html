@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PubCast Operator Console</title>
+  <link rel="stylesheet" href="/static/admin.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <h1>PubCast Operator Console</h1>
+    <div class="status">
+      <span id="ws-status" class="badge">WS: disconnected</span>
+      <button id="refresh-button" class="ghost">Refresh Data</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <h2>Available Agents</h2>
+      <div id="agents-list" class="list">Loading agents...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Create Multi-Agent Room</h2>
+      <form id="create-room-form" class="form">
+        <label>Name / Purpose
+          <input type="text" id="room-name" placeholder="Eg. keynote-demo" required />
+        </label>
+        <label>Initial Agents
+          <div id="agent-checkboxes" class="checkbox-grid"></div>
+        </label>
+        <button type="submit" class="primary">Create Room</button>
+        <p id="create-room-status" class="status-line"></p>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>System Status</h2>
+      <div id="inference-summary" class="stat-block">Loading inference status...</div>
+      <div id="scene-summary" class="list">Loading scenes...</div>
+      <div id="credential-status" class="list">Loading credentials...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Gemini Setup</h2>
+      <form id="gemini-bot-form" class="form">
+        <label>API Key Env Var
+          <input type="text" id="gemini-env" value="PUBCAST_GEMINI_KEY" />
+        </label>
+        <label>Bot ID
+          <input type="text" id="gemini-bot-id" value="gemini" />
+        </label>
+        <label>Display Name
+          <input type="text" id="gemini-name" value="Gemini" />
+        </label>
+        <label>Model
+          <input type="text" id="gemini-model" value="gemini-1.5-flash" />
+        </label>
+        <label>Rooms (comma separated)
+          <input type="text" id="gemini-rooms" value="green" />
+        </label>
+        <div class="form-inline">
+          <label><input type="checkbox" id="gemini-auto" checked /> Auto reply</label>
+          <label><input type="checkbox" id="gemini-mention-only" /> Mention only</label>
+        </div>
+        <label>Admin Key (optional)
+          <input type="password" id="admin-key" placeholder="X-Admin-Key header" />
+        </label>
+        <button type="submit" class="primary">Add Gemini Bot</button>
+        <p id="gemini-status" class="status-line"></p>
+      </form>
+      <p class="hint">Tip: ensure the server env contains the variable above with your Gemini API key, then register the bot.</p>
+    </section>
+
+    <section class="panel">
+      <h2>ChatGPT Setup</h2>
+      <form id="openai-bot-form" class="form">
+        <label>API Key Env Var
+          <input type="text" id="openai-env" value="PUBCAST_OPENAI_KEY" />
+        </label>
+        <label>Bot ID
+          <input type="text" id="openai-bot-id" value="chatgpt" />
+        </label>
+        <label>Display Name
+          <input type="text" id="openai-name" value="ChatGPT" />
+        </label>
+        <label>Model
+          <input type="text" id="openai-model" value="gpt-4o-mini" />
+        </label>
+        <label>Rooms (comma separated)
+          <input type="text" id="openai-rooms" value="green" />
+        </label>
+        <div class="form-inline">
+          <label><input type="checkbox" id="openai-auto" checked /> Auto reply</label>
+          <label><input type="checkbox" id="openai-mention-only" /> Mention only</label>
+        </div>
+        <button type="submit" class="primary">Add ChatGPT Bot</button>
+        <p id="openai-status" class="status-line"></p>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Qwen Setup</h2>
+      <form id="qwen-bot-form" class="form">
+        <label>API Key Env Var
+          <input type="text" id="qwen-env" value="QWEN_API_KEY" />
+        </label>
+        <label>Bot ID
+          <input type="text" id="qwen-bot-id" value="qwen" />
+        </label>
+        <label>Display Name
+          <input type="text" id="qwen-name" value="Qwen" />
+        </label>
+        <label>Model
+          <input type="text" id="qwen-model" value="qwen2.5-7b-instruct" />
+        </label>
+        <label>Rooms (comma separated)
+          <input type="text" id="qwen-rooms" value="green" />
+        </label>
+        <div class="form-inline">
+          <label><input type="checkbox" id="qwen-auto" checked /> Auto reply</label>
+          <label><input type="checkbox" id="qwen-mention-only" /> Mention only</label>
+        </div>
+        <button type="submit" class="primary">Add Qwen Bot</button>
+        <p id="qwen-status" class="status-line"></p>
+      </form>
+      <p class="hint">To use Qwen via OpenAI-compatible API, set server env OPENAI_BASE_URL (or QWEN_BASE_URL) to your endpoint and choose a Qwen model id.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Registered Bots</h2>
+      <div id="bots-list" class="list">Loading bots...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Active Rooms</h2>
+      <div id="rooms-list" class="list">Loading rooms...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Tracking</h2>
+      <form id="tracking-template-form" class="form">
+        <label>Template ID
+          <input type="text" id="tpl-id" placeholder="tpl_mug" />
+        </label>
+        <label>Label
+          <input type="text" id="tpl-label" placeholder="Mug" />
+        </label>
+        <button type="submit" class="primary">Save Template</button>
+        <p id="tpl-status" class="status-line"></p>
+      </form>
+      <div>
+        <h3>Templates</h3>
+        <div id="tpl-list" class="list">Loading templates...</div>
+        <details style="margin-top:8px;">
+          <summary>Template Editor</summary>
+          <div class="form">
+            <label>Template
+              <select id="tpl-edit-select"></select>
+            </label>
+            <div class="form-inline" style="gap:8px; align-items:center;">
+              <label>Print size (mm)
+                <input type="number" id="tpl-print-size" value="50" min="10" max="200" style="width:90px;" />
+              </label>
+              <button id="tpl-print-tags" class="ghost">Print Tags</button>
+            </div>
+            <h4 style="margin-top:8px;">Markers</h4>
+            <div id="tpl-markers" class="list"></div>
+            <button id="tpl-add-marker" class="ghost">Add Marker</button>
+            <h4 style="margin-top:8px;">Attach Points</h4>
+            <div id="tpl-attach" class="list"></div>
+            <button id="tpl-add-attach" class="ghost">Add Attach Point</button>
+            <div class="form-inline" style="margin-top:8px;">
+              <button id="tpl-save-full" class="primary">Save Template</button>
+              <span id="tpl-save-status" class="status-line"></span>
+            </div>
+          </div>
+        </details>
+      </div>
+      <div>
+        <h3>Tracks</h3>
+        <div id="trk-list" class="list">Loading tracks...</div>
+        <div class="form-inline">
+          <button id="trk-assign-demo" class="ghost">Assign Demo Track</button>
+          <button id="trk-sim-tick" class="ghost">Sim Tick</button>
+        </div>
+        <details style="margin-top:8px;">
+          <summary>Live Observe (paste detections)</summary>
+          <div class="form">
+            <label>Detections JSON
+              <textarea id="det-input" placeholder='{"detections":[{"id":"42","position":[1,0,0]}]}' rows="3" style="width:100%"></textarea>
+            </label>
+            <div class="form-inline">
+              <button id="det-send" class="ghost">Send</button>
+              <span class="hint">Sends to /api/tracking/ingest/detections</span>
+            </div>
+            <p id="det-status" class="status-line"></p>
+          </div>
+        </details>
+        <details style="margin-top:8px;">
+          <summary>Bind Placement to Track</summary>
+          <div class="form">
+            <label>Scene
+              <select id="bind-scene"></select>
+            </label>
+            <label>Placement
+              <select id="bind-placement"></select>
+            </label>
+            <label>Track
+              <select id="bind-track"></select>
+            </label>
+            <div class="form-inline">
+              <button id="bind-apply" class="primary">Bind</button>
+              <button id="bind-clear" class="ghost danger">Unbind</button>
+            </div>
+            <p id="bind-status" class="status-line"></p>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="panel full">
+      <h2>Room Diagnostics</h2>
+      <form id="diagnostic-form" class="form-inline">
+        <label>Room ID
+          <input type="text" id="diagnostic-room" placeholder="rm_ab12ef34" required />
+        </label>
+        <button type="submit" class="ghost">Connect WS</button>
+        <button id="disconnect-ws" type="button" class="ghost danger" disabled>Disconnect</button>
+      </form>
+      <pre id="event-log" class="event-log"></pre>
+    </section>
+  </main>
+
+  <script src="/static/admin.js" type="module"></script>
+</body>
+</html>

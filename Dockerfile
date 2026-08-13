@@ -1,34 +1,41 @@
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1
 
-LABEL maintainer="Rear View Foresight LLC"
-LABEL description="PubCast AI v5.0 — Collaborative AI-Infused Virtual Production"
+# Stage 1: Build dependencies (if any)
+FROM node:20-alpine AS deps
+WORKDIR /app
+# Copy only package.json and package-lock.json if present
+COPY --link package.json ./
+# If you use lock files, uncomment the next line
+# COPY --link package-lock.json ./
+RUN if [ -f package.json ]; then npm install --production; fi
 
+# Stage 2: Final image
+FROM node:20-alpine AS final
 WORKDIR /app
 
-# System dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+# Create a non-root user
+RUN addgroup -S pubcast && adduser -S pubcast -G pubcast
 
-# Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy static files (your JS/CSS/HTML assets)
+COPY --link . ./
 
-# Application
-COPY . .
+# Copy node_modules from deps stage if present
+COPY --from=deps /app/node_modules ./node_modules
 
-# Create data directories
-RUN mkdir -p data/bots data/global data/logs data/users data/jeremy \
-    data/ethereal data/vault data/governance data/recordings \
-    data/exports data/imports data/emergency_saves \
-    data/byok data/credentials data/alex assets
+USER pubcast
 
-EXPOSE 8000
+# If you have a server.js or index.js entrypoint, set it here
+# For a static frontend, you may want to use a static file server like 'http-server'
+# Install http-server if needed
+RUN npm install -g http-server
 
-ENV PUBCAST_HOST=0.0.0.0
-ENV PUBCAST_PORT=8000
-ENV PUBCAST_DATA_DIR=data
-ENV PUBCAST_STATIC_DIR=static
-ENV PUBCAST_ASSETS_DIR=assets
+# Expose port 8080 (default for http-server)
+EXPOSE 8080
 
-CMD ["python", "main.py"]
+# Start static file server
+CMD ["http-server", ".", "-p", "8080"]
+
+# Notes:
+# - If your JS files are only frontend assets, this serves them statically.
+# - If you have a Node.js backend, change CMD to ["node", "server.js"] or your entrypoint.
+# - Make sure to add .git, .env, lock files, and IDE configs to your .dockerignore.

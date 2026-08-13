@@ -1,0 +1,86 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PubCast Dressing Room</title>
+  <link rel="stylesheet" href="/static/dressing.css" />
+</head>
+<body>
+  <div class="room">
+    <header class="top-bar">
+      <div class="logo">PubCast Dressing Room</div>
+      <div class="status">
+        <span class="voice-mode">Voice: <strong id="voice-mode">Default</strong></span>
+        <span class="halo-speed">Halo Speed: <strong id="halo-speed">1.0x</strong></span>
+      </div>
+    </header>
+    <main class="main">
+      <section class="mirror-area">
+        <div class="mirror-frame">
+          <div class="mirror-glow"></div>
+          <canvas id="mirror-canvas" width="600" height="600"></canvas>
+          <div id="avatar-preview" class="avatar-preview">\n            <canvas id="neon-avatar" width="360" height="360"></canvas>\n            <div class="halo" id="avatar-halo"></div>
+            <div class="sphere" id="avatar-sphere">
+              <div class="feature eyes" id="avatar-eyes"></div>
+              <div class="feature mouth" id="avatar-mouth"></div>
+              <div class="feature lashes" id="avatar-lashes"></div>
+              <div class="feature hair" id="avatar-hair"></div>
+              <div class="feature accessory" id="avatar-glasses"></div>
+              <div class="feature accessory" id="avatar-hat"></div>
+              <div class="feature accessory" id="avatar-earrings"></div>
+            </div>
+          </div>
+        </div>
+        <div class="mirror-footer">
+          <button id="preset-yellow" class="preset-card" data-preset="neon_yellow_a">
+            <span class="preview" style="background:#ffd84d"></span>
+            <span>Lumen</span>
+          </button>
+          <button id="preset-blue" class="preset-card" data-preset="neon_blue_b">
+            <span class="preview" style="background:#40d9ff"></span>
+            <span>Azure</span>
+          </button>
+          <button id="preset-pink" class="preset-card" data-preset="neon_pink_c">
+            <span class="preview" style="background:#ff4fe2"></span>
+            <span>Nova</span>
+          </button>
+        </div>
+      </section>
+      <aside class="wardrobe">
+        <button id="wardrobe-toggle" class="wardrobe-door">Open Wardrobe</button>
+        <div class="wardrobe-panel" id="wardrobe-panel">
+          <div class="panel-header">
+            <h2>Avatar Customizer</h2>
+            <button id="close-panel">Ã—</button>
+          </div>
+          <div class="panel-body">
+            <div class="section">
+              <label class="field">Display Name
+                <input type="text" id="display-name" maxlength="32" />
+              </label>
+              <label class="field">Gender
+                <select id="gender-select">
+                  <option value="neutral">Neutral</option>
+                  <option value="female">Female</option>
+                  <option value="male">Male</option>
+                </select>
+              </label>
+              <label class="field">Mood
+                <select id="mood-select"></select>
+              </label>
+            </div>
+            <div class="accordion" id="customizer-accordion"></div>
+          </div>
+          <div class="panel-footer">
+            <button id="save-avatar" class="primary">Save Look</button>
+            <span id="save-status" class="save-status" hidden>Saved!</span>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+  <script src="/static/avatar.js"></script>\n  <script src="/static/dressing.js" type="module"></script>
+</body>
+</html>
+

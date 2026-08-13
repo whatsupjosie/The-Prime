@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PubCast Backstage Map</title>
+  <link rel="stylesheet" href="/static/world.css" />
+</head>
+<body>
+  <header class="world-header">
+    <div class="brand">PubCast Backstage Prototype</div>
+    <div class="legend">
+      <span class="legend-item"><span class="chip dressing"></span>Dressing</span>
+      <span class="legend-item"><span class="chip green"></span>Green Room</span>
+      <span class="legend-item"><span class="chip studio"></span>Studio</span>
+      <span class="legend-item"><span class="chip control"></span>Control</span>
+      <span class="legend-item"><span class="chip pub"></span>The Pub</span>
+    </div>
+  </header>
+
+  <main class="world-layout">
+    <section class="stage">
+      <canvas id="backstage-canvas" width="1280" height="540"></canvas>
+      <div id="tooltip" class="tooltip" hidden></div>
+    </section>
+    <section class="sidebar" id="sidebar">
+      <div class="tabs">
+        <button data-tab="chat" class="tab active">Chat</button>
+        <button data-tab="transport" class="tab">Transport</button>
+        <button data-tab="settings" class="tab">Settings</button>
+      </div>
+      <div class="tab-content">
+        <div class="tab-panel active" data-pane="chat">
+          <div class="chat-log" id="mock-chat">
+            <div class="chat-entry system">System: Welcome to the backstage map prototype.</div>
+            <div class="chat-entry user">Sir Perulous: "Mind the cables, darling."
+            </div>
+          </div>
+          <div class="chat-input">
+            <input type="text" placeholder="Type a message..." disabled />
+            <button disabled>Send</button>
+          </div>
+        </div>
+        <div class="tab-panel" data-pane="transport">
+          <form id="transport-form" class="transport-form">
+            <label>Destination
+              <select id="transport-destination">
+                <option value="/dressing">Dressing Room</option>
+                <option value="/greenroom">Green Room</option>
+                <option value="/studio">Studio</option>
+                <option value="/control">Control Room</option>
+                <option value="/pub">The Pub</option>
+              </select>
+            </label>
+            <div class="transport-actions">
+              <label><input type="radio" name="travel-mode" value="walk" checked /> Walk</label>
+              <label><input type="radio" name="travel-mode" value="jump" /> Jump (instant)</label>
+            </div>
+            <button type="submit" class="primary">Go</button>
+          </form>
+        </div>
+        <div class="tab-panel" data-pane="settings">
+          <div class="settings-group">
+            <label class="checkbox"><input type="checkbox" id="show-tracking" checked /> Show tracking overlay</label>
+            <label>Halo Intensity
+              <input type="range" min="0" max="100" value="60" disabled />
+            </label>
+            <label>Ambient Audio
+              <input type="range" min="0" max="100" value="40" disabled />
+            </label>
+            <label class="checkbox"><input type="checkbox" checked disabled /> Idle animations</label>
+            <label class="checkbox"><input type="checkbox" checked disabled /> Sir Perulous tips</label>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <button id="toggle-sidebar" class="sidebar-toggle">Toggle Panels</button>
+
+  <script src="/static/world.js" type="module"></script>
+</body>
+</html>

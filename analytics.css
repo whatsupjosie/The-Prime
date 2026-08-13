@@ -1,0 +1,120 @@
+:root {
+  --analytics-bg: #070b13;
+  --panel-bg: rgba(15, 21, 35, 0.92);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --accent: #46e6ff;
+  --accent-secondary: #ff9b42;
+  --muted: rgba(255, 255, 255, 0.65);
+}
+
+.analytics-shell {
+  min-height: 100vh;
+  padding: 2.5rem 3rem;
+  background: radial-gradient(circle at top, rgba(70, 230, 255, 0.12), transparent 55%),
+    linear-gradient(180deg, rgba(7, 11, 19, 0.95), #05070d 70%);
+  color: #f5f8ff;
+  display: grid;
+  gap: 2rem;
+}
+
+.analytics-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 2rem;
+}
+
+.analytics-header h1 {
+  margin: 0;
+  font-size: clamp(2.1rem, 4vw, 2.7rem);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.ghost-btn {
+  padding: 0.5rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.analytics-grid {
+  display: grid;
+  gap: 1.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.metric-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 1.6rem;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.35);
+  min-height: 200px;
+  display: grid;
+  gap: 1rem;
+}
+
+.metric-card h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.metric-body {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.metric-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(9, 13, 22, 0.75);
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.metric-item span {
+  color: var(--muted);
+}
+
+.metric-item strong {
+  font-size: 1.05rem;
+}
+
+.metric-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.metric-list li {
+  background: rgba(9, 13, 22, 0.75);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.metric-list li.muted {
+  justify-content: center;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.6rem;
+  background: rgba(70, 230, 255, 0.2);
+  border-radius: 999px;
+  font-size: 0.75rem;
+}

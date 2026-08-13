@@ -1,2415 +1,2396 @@
-"""
-main.py — PubCast AI v5.6 — Production Entry Point
-════════════════════════════════════════════════════════════════════════════════
-Boots all systems in dependency order, wires every integration hook,
-and starts the FastAPI server.
+﻿from __future__ import annotations
 
-Boot Sequence (12 steps + sub-steps):
-  1.   Hub (message router + history)
-  2.   RoomManager
-  2b.  PerformanceManager (profile policy — optional)
-  2c.  ChoreographyController (animation tick — optional)
-  2d.  LightingEngine (preset management — optional)
-  3.   InferenceManager (Ollama Studio + GGUF Architect dual-mind)
-  4.   CricketKeeper (per-character SQLite memory — optional)
-  5.   BotManager (AI co-hosts: Pete, Sir Purfluous, Jeremy Cricket)
-  6.   Cameras + RecordingService
-  7.   GovernanceEngine (bans, mute, consent, waiting room)
-  8.   BYOK Manager (user-supplied API keys — optional)
-  9.   ThinkingContext (Jeremy conductor — optional)
-  10.  EtherealAvatarManager (57-joint neon avatars — optional)
-  11.  EVO Protocol (Switchblade + VDI + E-Pete Sacred Chain — optional)
-  12.  Vault (OS-level file protection — optional)
-  12b. Doctor (environment verifier — optional)
-
-Run:
-  python main.py
-  uvicorn main:app --host 0.0.0.0 --port 8000
-
-Rear View Foresight LLC — Feic Mo Chroí — 2026
-"""
-
-from __future__ import annotations
-
+import io
 import asyncio
 import json
-import logging
 import os
-import time
-from contextlib import asynccontextmanager
+import shutil
+import uuid
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Depends
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    Body,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+import subprocess
+import tempfile
+from contextlib import asynccontextmanager
+import base64
+import logging
 
-# ─── Core modules (always present) ────────────────────────────────────────────
-from modules.appconfig import settings
+from modules.avatar import list_presets, load_avatar_async, save_avatar_async
+from modules.credentials import CredentialStore
 from modules.hub import Hub
-from modules.bots import BotManager
-from modules.rooms import RoomManager
-from modules.inference import InferenceManager
-from modules.models import BotConfig, BotProvider, ProductionState
-from modules.cameras import CameraManager, create_default_cameras
-from modules.recording import RecordingService, create_recording_service
-from modules.production_routes import create_production_router
-from modules.governance import GovernanceEngine
-from modules.governance_routes import create_governance_router
-from modules.avatar_studio_bridge import AvatarStudioBridge, create_avatar_studio_router
-from modules.pubworld_hotspots import create_hotspot_router
-from modules.avatar import load_avatar, save_avatar, list_presets as list_avatar_presets
-from modules.character_cast import list_cast_characters, get_cast_character
-from modules.persistence import read_json, write_json, sanitize_filename, unique_child_path
-
-# ─── NEW: v5.6 Integration modules ────────────────────────────────────────────
-from modules import timeline_routes
-from modules import structured_log_routes
-from modules import recording_pipeline_routes
-from modules import governance_waiting_room
-try:
-    from modules import bubble_routes as bubble_routes_module
-    from modules.bubble_jeremy_adapter import BubbleJeremyAdapter
-    _HAS_BUBBLE_STACK = True
-except ImportError:
-    bubble_routes_module = None
-    BubbleJeremyAdapter = None
-    _HAS_BUBBLE_STACK = False
-from modules import hotspot_system
-from modules.structured_log import init_production_log, emit
-from modules.recording_pipeline import ServerRecordingSession
-from modules.save_metadata import attach_save_metadata
-from modules import dressing_room_security as dr_security
-from modules import session_runtime
-from modules import credits_export
-from modules import memory_engine
-from modules import memory_routes as memory_routes_module
-from modules.system_memory import SystemMemory
-from modules.alex_core import AlexCore
-from modules.alex_jeremy_bridge import AlexJeremyBridge
-from modules import alex_routes, auth_routes, userdb, auth as auth_module
-from modules.route_security import auth_enforced, current_identity, bound_actor, require_role
-from modules.timeline_routes import register_timeline_handler
-from modules.timeline import EventType
-
-# ─── Optional modules — every import guarded; server boots regardless ─────────
-_HAS_CRICKET          = False
-_HAS_THINKING_CONTEXT = False
-_HAS_ETHEREAL         = False
-_HAS_EVO              = False
-_HAS_VAULT            = False
-_HAS_BYOK             = False
-_HAS_PERFORMANCE      = False
-_HAS_CHOREO           = False
-_HAS_LIGHTING         = False
-_HAS_DOCTOR           = False
-
-try:
-    from modules.jeremy_cricket import CricketKeeper
-    _HAS_CRICKET = True
-except ImportError:
-    CricketKeeper = None
-
-try:
-    from thinking_context import mount as tc_mount, CharacterProfile
-    _HAS_THINKING_CONTEXT = True
-except ImportError:
-    tc_mount         = None
-    CharacterProfile = None
-
-try:
-    from modules.ethereal_avatars import (
-        EtherealAvatarManager, create_ethereal_router,
-        handle_ethereal_ws_message, ETHEREAL_TYPES,
-    )
-    _HAS_ETHEREAL = True
-except ImportError:
-    EtherealAvatarManager      = None
-    handle_ethereal_ws_message = None
-    ETHEREAL_TYPES             = set()
-
-try:
-    from modules.evo import _EVO_CORE_AVAILABLE, EVOOrchestrator
-    _HAS_EVO = _EVO_CORE_AVAILABLE
-except ImportError:
-    _HAS_EVO        = False
-    EVOOrchestrator = None
-
-try:
-    from modules.byok_manager import BYOKManager
-    from modules.byok_routes import mount_byok_routes as create_byok_router
-    _HAS_BYOK = True
-except ImportError:
-    BYOKManager = None
-
-try:
-    from modules.pubcast_vault import PubCastVault, create_vault_router
-    _HAS_VAULT = True
-except ImportError:
-    PubCastVault = None
-
-try:
-    from modules.performance_manager import PerformanceManager
-    _HAS_PERFORMANCE = True
-except ImportError:
-    PerformanceManager = None
-
-try:
-    from modules.choreography_controller import ChoreoController as ChoreographyController
-    _HAS_CHOREO = True
-except ImportError:
-    ChoreographyController = None
-
-try:
-    from modules.lighting_engine import LightingEngine, LightingHubPatch, list_presets as list_lighting_presets
-    _HAS_LIGHTING = True
-except ImportError:
-    LightingEngine         = None
-    LightingHubPatch       = None
-    list_lighting_presets  = None
-
-try:
-    from modules.doctor import run_doctor as _run_doctor_fn, run_launch_gate as _run_launch_gate_fn
-    _HAS_DOCTOR = True
-except ImportError:
-    _run_doctor_fn = None
-    _run_launch_gate_fn = None
-
-# ─── New subsystem imports (all guarded) ──────────────────────────────────────
-_HAS_PUBWORLD_ROUTER   = False
-_HAS_PUBWORLD_SCENES   = False
-_HAS_PUBWORLD_BLOCKS   = False
-_HAS_SURFACES          = False
-_HAS_PROJECTS          = False
-_HAS_AVATAR_ASSETS     = False
-_HAS_SCULPTOR          = False
-_HAS_STUDIO_CONTROL    = False
-_HAS_MOCAP             = False
-_HAS_UNITY_BRIDGE      = False
-_HAS_VOXEL             = False
-_HAS_BRIDGE            = False
-_HAS_ORCHESTRATOR      = False
-_HAS_PETE_ENHANCED    = False
-
-try:
-    from modules.pubworld_router import router as _pubworld_router, push_production_state_to_pubworld
-    _HAS_PUBWORLD_ROUTER = True
-except ImportError:
-    _pubworld_router = None
-    push_production_state_to_pubworld = None
-
-try:
-    from modules.pubworld import list_scenes, create_scene, get_scene
-    _HAS_PUBWORLD_SCENES = True
-except ImportError:
-    list_scenes = create_scene = get_scene = None
-
-try:
-    from modules.pubworld_blocks import Block, Prop, Prototype, Tracker, list_props
-    _HAS_PUBWORLD_BLOCKS = True
-except ImportError:
-    pass
-
-try:
-    from modules.surfaces import Surface, SurfaceManager
-    _HAS_SURFACES = True
-except ImportError:
-    SurfaceManager = None
-
-try:
-    from modules.projects import list_autosaves, save_autosave_snapshot
-    _HAS_PROJECTS = True
-except ImportError:
-    list_autosaves = save_autosave_snapshot = None
-
-try:
-    from modules.avatar_assets import AvatarManifest, AssetPack
-    _HAS_AVATAR_ASSETS = True
-except ImportError:
-    pass
-
-try:
-    from modules.sculptor import Sculptor
-    _HAS_SCULPTOR = True
-except ImportError:
-    Sculptor = None
-
-try:
-    from modules.studio_control import StudioControl, StudioState
-    from modules.studio_websocket import StudioWebSocketHandler
-    _HAS_STUDIO_CONTROL = True
-except ImportError:
-    StudioControl = None
-    StudioWebSocketHandler = None
-
-try:
-    from modules.mocap_integration import MocapIntegration
-    _HAS_MOCAP = True
-except ImportError:
-    MocapIntegration = None
-
-try:
-    from modules.unity_bridge import UnityBridge
-    _HAS_UNITY_BRIDGE = True
-except ImportError:
-    UnityBridge = None
-
-try:
-    from modules.voxel_asset_manager import VoxelAssetManager
-    from modules.voxel_llm_adapter import generate_with_cloud as voxel_generate
-    from modules.voxel_studio_integration import VoxelStudioIntegration
-    _HAS_VOXEL = True
-except ImportError:
-    VoxelAssetManager = None
-    voxel_generate = None
-    VoxelStudioIntegration = None
-
-try:
-    from modules.bridge_bulletproof import VoxelBridge
-    _HAS_BRIDGE = True
-except ImportError:
-    try:
-        from modules.bridge import VoxelBridge
-        _HAS_BRIDGE = True
-    except ImportError:
-        VoxelBridge = None
-
-try:
-    from modules.pete_enhanced import PeteEnhanced
-    from modules import pete_enhanced_routes
-    _HAS_PETE_ENHANCED = True
-except ImportError:
-    PeteEnhanced = None
-    pete_enhanced_routes = None
-
-try:
-    from modules.orchestrator import ConversationOrchestrator
-    _HAS_ORCHESTRATOR = True
-except ImportError:
-    ConversationOrchestrator = None
-
-# ─── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
+from modules.models import ProductionState
+from modules.persistence import (
+    allowed_upload_extension,
+    ensure_dirs,
+    sanitize_filename,
+    append_jsonl_async,
+    read_yaml,
 )
+from modules.pubworld import (
+    create_scene,
+    delete_scene,
+    get_scene,
+    save_scene,
+    get_timeline,
+    list_placeholder_assets,
+    list_scenes,
+    update_scene,
+    update_timeline,
+)
+from modules.choreography import get_plan as get_perf_plan, update_plan as update_perf_plan
+from modules.cameras import create_default_cameras, CameraSource, CameraTransport
+from modules.recording import create_recording_service
+from modules.rooms import RoomManager
+from modules.choreography_controller import ChoreoController
+from modules.choreo_api import list_steps as choreo_list_steps, add_step as choreo_add_step, delete_step as choreo_delete_step
+from modules.retarget_verify import verify_mapping as _verify_mapping
+from modules.tracking.service import TrackingService
+from modules.schemas import ChoreoStep
+from modules.interactables import list_items as list_interactables
+from modules.interactables import list_items as list_interactables
+from modules.agents.base import AdapterFactory, AgentRegistry
+from modules.agents.openai_adapter import OpenAIAdapter
+from modules.agents.gemini_adapter import GeminiAdapter
+from modules.agents.anthropic_adapter import AnthropicAdapter
+from modules.agents.ollama_adapter import OllamaAdapter
+from modules.agents.qwen_adapter import QwenAdapter
+from modules.agents.lmcoder_adapter import LMcoderAdapter
+from modules.orchestrator import ConversationOrchestrator
+from modules.schemas import (
+    ModelCreateRequest,
+    ModelResponse,
+    ModelsResponse,
+    ModelUpdateRequest,
+    ModelVerifyRequest,
+    PerformancePlanResponse,
+    PerformancePlanUpdate,
+    CredentialSummaryResponse,
+    PubWorldSceneCreate,
+    PubWorldSceneResponse,
+    PubWorldScenesResponse,
+    PubWorldSceneUpdate,
+    PubWorldTimelineResponse,
+    PubWorldTimelineUpdate,
+    RoomCreateRequest,
+    AddAgentsRequest,
+)
+from modules.user_models import UserModelManager
+from modules.bots import BotManager
+from modules.audio_router import router as audio_router
+from modules.providers.health_router import router as providers_router
+from starlette.websockets import WebSocketState
+from modules.shepard import ShepardService, ShepardConfig
+from modules.jobs.worker import AudioJobWorker
+from modules.security.middleware import require_permission_or_admin
+from modules.security.auth import Permission
+from modules.ai_router import router as ai_router
+
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+ASSETS_DIR = BASE_DIR / "assets"
+STATIC_DIR = BASE_DIR / "static"
+TEMPLATES_DIR = BASE_DIR / "templates"
+
+ensure_dirs(DATA_DIR, ASSETS_DIR)
+
+# Logging setup (controlled via PUBCAST_LOG_LEVEL env var)
+_log_level = getattr(logging, os.getenv("PUBCAST_LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(level=_log_level)
 logger = logging.getLogger("pubcast")
 
-# ─── Paths ─────────────────────────────────────────────────────────────────────
-DATA_DIR   = Path(settings.data_dir)
-STATIC_DIR = Path(settings.static_dir)
-ASSETS_DIR = Path(settings.assets_dir)
-
-for _d in [
-    DATA_DIR, DATA_DIR / "logs", DATA_DIR / "users", DATA_DIR / "bots",
-    DATA_DIR / "global", DATA_DIR / "jeremy", DATA_DIR / "ethereal",
-    DATA_DIR / "vault", DATA_DIR / "governance", DATA_DIR / "recordings",
-    DATA_DIR / "exports", DATA_DIR / "imports", DATA_DIR / "byok",
-    DATA_DIR / "evo", DATA_DIR / "pubworld" / "scenes",
-    DATA_DIR / "projects", DATA_DIR / "sculptures",
-    DATA_DIR / "timelines", DATA_DIR / "hotspots", DATA_DIR / "environments",
-    DATA_DIR / "system",
-    STATIC_DIR, ASSETS_DIR,
-]:
-    _d.mkdir(parents=True, exist_ok=True)
-
-# ─── Global refs ───────────────────────────────────────────────────────────────
-hub:               Optional[Hub]               = None
-bot_manager:       Optional[BotManager]        = None
-room_manager:      Optional[RoomManager]       = None
-inference:         Optional[InferenceManager]  = None
-cameras:           Optional[CameraManager]     = None
-recording:         Optional[RecordingService]  = None
-governance:        Optional[GovernanceEngine]  = None
-cricket_keeper:    Any = None
-ethereal_mgr:      Any = None
-avatar_studio:     Any = None
-evo_orchestrator:  Any = None
-vault:             Any = None
-byok_mgr:          Any = None
-performance_manager: Any = None
-choreo_controller: Any = None
-lighting_engine:   Any = None
-lighting_hub_patch: Any = None
-# ─── New subsystem globals ─────────────────────────────────────────────────────
-surface_manager:        Any = None
-studio_control:         Any = None
-studio_ws_handler:      Any = None
-voxel_asset_manager:    Any = None
-voxel_studio:           Any = None
-voxel_bridge:           Any = None
-unity_bridge:           Any = None
-mocap:                  Any = None
-conv_orchestrator:      Any = None
-pete_enhanced:          Any = None
-bubble_jeremy_adapter:  Any = None
-# ─── NEW: v5.6 Integration globals ────────────────────────────────────────────
-production_log:         Any = None
-timeline_player:        Any = None
-waiting_room_manager:   Any = None
-hotspot_manager:        Any = None
-pipeline_sessions:      Dict[str, Any] = {}
-
-
-class _StudioPeteShim:
-    """Minimal non-speaking Pete stand-in so StudioControl can boot cleanly."""
-
-    async def speak(self, *args, **kwargs):
-        return None
-
-    async def emergency_flush_buffers(self, *args, **kwargs):
-        return None
-
-
-def _ensure_default_voxel_asset_library(data_dir: Path) -> Path:
-    """Create a minimal voxel asset library file if none exists yet."""
-    library_path = data_dir / "voxel_asset_library.json"
-    if library_path.exists():
-        return library_path
-    default_library = {
-        "furniture": {"standard": [], "fancy": []},
-        "home_structure": {"standard": [], "fancy": []},
-        "rooms": {"standard": [], "fancy": []},
-        "outdoor": {"standard": [], "fancy": []},
-        "vehicles": {"standard": [], "fancy": []},
-        "props": {"standard": [], "fancy": []},
-    }
-    library_path.write_text(json.dumps(default_library, indent=2), encoding="utf-8")
-    logger.info("[INIT] Created default voxel asset library at %s", library_path)
-    return library_path
-
-
-# ─── CORS ─────────────────────────────────────────────────────────────────────
-def _resolve_cors_origins() -> tuple[list[str], bool]:
-    raw = os.getenv("PUBCAST_ALLOWED_ORIGINS", "*")
-    origins = [o.strip() for o in raw.split(",") if o.strip()]
-    credentials = True
-    if "*" in origins:
-        if len(origins) > 1:
-            origins = [o for o in origins if o != "*"]
-            logger.warning("CORS: wildcard mixed with specific — wildcard dropped: %s", origins)
-        else:
-            credentials = False
-            logger.warning("CORS: '*' — allow_credentials forced False. Set PUBCAST_ALLOWED_ORIGINS to specific origin.")
-    return origins, credentials
-
-
-async def _json_dict(request: Request, *, allow_empty: bool = False) -> Dict[str, Any]:
-    """Parse a request body and require a JSON object.
-
-    A lot of older routes assumed a dict-shaped body and would explode with a 500
-    or odd AttributeError when handed malformed JSON, a list, or a bare string.
-    This keeps those boring failures boring.
-    """
+# Optional: load .env file for local development
+def _load_env_file(env_path: Optional[Path] = None) -> None:
     try:
-        raw = await request.body()
-    except Exception as exc:
-        if allow_empty:
-            return {}
-        raise HTTPException(status_code=400, detail="Invalid request body") from exc
-    if not raw:
-        return {}
+        path = env_path or (BASE_DIR / ".env")
+        if not path.exists():
+            return
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            # Strip surrounding quotes if any
+            val = value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    except Exception:
+        # Best-effort loader; log at debug so env parsing issues are visible during development
+        logger.debug("Failed to load .env file: %s", env_path or (BASE_DIR / ".env"), exc_info=True)
+
+
+_load_env_file()
+
+
+# Managers
+hub = Hub(DATA_DIR)
+credential_store = CredentialStore(DATA_DIR)
+user_model_manager = UserModelManager(DATA_DIR, credential_store)
+room_manager = RoomManager()
+# Camera manager (bootstrapped once so we can expose telemetry)
+camera_manager = create_default_cameras()
+recording_service = create_recording_service(DATA_DIR, camera_manager)
+bot_manager = BotManager(DATA_DIR, hub)
+hub.set_bot_manager(bot_manager)
+choreo_controller = ChoreoController(hub)
+tracking_service = TrackingService(DATA_DIR)
+
+# Optional: enable real inference worker when env flag is set
+_INFERENCE_ENABLED = os.getenv("PUBCAST_ENABLE_INFERENCE_WORKER", "").strip().lower() in ("1", "true", "yes")
+inference_manager = None
+_AI_WORKERS_ENABLED = os.getenv("PUBCAST_ENABLE_AI_WORKERS", "").strip().lower() in ("1", "true", "yes")
+ai_worker_pool = None
+
+# --- Multi-agent orchestrator wiring ---
+adapter_factory = AdapterFactory()
+adapter_factory.register("openai", OpenAIAdapter)
+adapter_factory.register("gemini", GeminiAdapter)
+adapter_factory.register("anthropic", AnthropicAdapter)
+adapter_factory.register("ollama", OllamaAdapter)
+adapter_factory.register("qwen", QwenAdapter)
+adapter_factory.register("lmcoder", LMcoderAdapter)
+
+_AGENTS_CONFIG_PATH = BASE_DIR / "config" / "models.yaml"
+_agents_raw = read_yaml(_AGENTS_CONFIG_PATH)
+_agent_configs = []
+for entry in (_agents_raw.get("agents") or []):
     try:
-        body = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Malformed JSON body") from exc
-    if body is None and allow_empty:
-        return {}
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="JSON object body required")
-    return body
+        from modules.schemas import AgentConfig  # local import to avoid circular at module import time
 
+        _agent_configs.append(AgentConfig(**entry))
+    except Exception:
+        logger.debug("Failed to parse agent config entry: %s", entry, exc_info=True)
+agent_registry = AgentRegistry(adapter_factory, _agent_configs)
+orchestrator = ConversationOrchestrator(room_manager, agent_registry)
 
-def _bounded_text(value: Any, *, default: str = '', max_len: int = 120) -> str:
-    text = str(default if value is None else value).strip()
-    return text[:max_len]
-
-
-def _bounded_string_list(value: Any, *, field_name: str, max_items: int = 8, max_len: int = 64) -> List[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        raw_items = [value]
-    elif isinstance(value, (list, tuple, set)):
-        raw_items = list(value)
-    else:
-        raise HTTPException(status_code=400, detail=f"{field_name} must be a string or list of strings")
-    out: List[str] = []
-    seen: set[str] = set()
-    for item in raw_items:
-        normalized = _bounded_text(item, max_len=max_len)
-        if not normalized or normalized in seen:
-            continue
-        out.append(normalized)
-        seen.add(normalized)
-        if len(out) >= max_items:
-            break
-    return out
-
-
-def _object_or_empty(value: Any, *, field_name: str) -> Dict[str, Any]:
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise HTTPException(status_code=400, detail=f"{field_name} must be an object")
-    return value
-
-
-def _string_list_field(value: Any, field_name: str, *, max_items: int = 32, max_len: int = 120) -> List[str]:
-    if value is None:
-        return []
-    if not isinstance(value, (list, tuple, set)):
-        raise HTTPException(status_code=400, detail=f"{field_name} must be a list of strings")
-    out: List[str] = []
-    for item in list(value)[:max_items]:
-        out.append(_bounded_text(item, max_len=max_len))
-    return out
-
-
-def _caller_or_body_identity(
-    *,
-    request: Request,
-    identity: Dict[str, Any],
-    explicit_value: Any = None,
-    field_name: str = "actor",
-    allow_privileged_override: bool = True,
-    fallback: str = "anon",
-) -> str:
-    """Bind identities only when auth or explicit caller headers make it meaningful.
-
-    Legacy local flows often omit X-Client-Id entirely; in that relaxed case, let explicit
-    body values pass through so older pages/tests keep working. Once auth is enforced or the
-    caller explicitly sends X-Client-Id, use the shared security helper to prevent spoofing.
-    """
-    header_value = request.headers.get("X-Client-Id")
-    if auth_enforced() or header_value:
-        return bound_actor(
-            request=request,
-            identity=identity,
-            explicit_value=explicit_value if explicit_value not in (None, "") else header_value,
-            field_name=field_name,
-            allow_privileged_override=allow_privileged_override,
-        )
-    explicit = str(explicit_value or "").strip()
-    return explicit or fallback
-
-
-# ─── Body-size guard ──────────────────────────────────────────────────────────
-class BodySizeLimitMiddleware(BaseHTTPMiddleware):
-    MAX_BODY = 1_048_576  # 1 MB
-
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                if int(content_length) > self.MAX_BODY:
-                    return JSONResponse({"detail": "Request body too large (max 1MB)"}, status_code=413)
-            except ValueError:
-                pass
-        body_size = 0
-        original_receive = request._receive  # noqa: SLF001
-
-        async def limited_receive():
-            nonlocal body_size
-            message = await original_receive()
-            if message.get("type") == "http.request":
-                body_size += len(message.get("body", b""))
-                if body_size > self.MAX_BODY:
-                    return {"type": "http.request", "body": b"", "more_body": False}
-            return message
-
-        request._receive = limited_receive  # noqa: SLF001
-        response = await call_next(request)
-        if body_size > self.MAX_BODY:
-            return JSONResponse({"detail": "Request body too large (max 1MB)"}, status_code=413)
-        return response
-
-
-# ─── ThinkingContext adapter ───────────────────────────────────────────────────
-class PubCastContextAdapter:
-    def __init__(self, h: Hub, bm: BotManager) -> None:
-        self._hub = h
-        self._bm  = bm
-    async def get_recent_history(self, room: str, limit: int = 12) -> list:
-        return await self._hub.get_recent_history(room, limit)
-    async def nudge(self, room_id: str, hint: str) -> bool:
-        return await self._bm.nudge(room_id, hint)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Lifespan — 12-step boot
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @asynccontextmanager
-async def lifespan(application: FastAPI):
-    global hub, bot_manager, room_manager, inference, cameras, recording
-    global governance, cricket_keeper, ethereal_mgr, avatar_studio, vault, evo_orchestrator
-    global byok_mgr, performance_manager, choreo_controller, lighting_engine, lighting_hub_patch
-    global surface_manager, studio_control, studio_ws_handler
-    global voxel_asset_manager, voxel_studio, voxel_bridge, unity_bridge, mocap, conv_orchestrator, pete_enhanced, bubble_jeremy_adapter
-    global production_log, timeline_player, waiting_room_manager, hotspot_manager, pipeline_sessions
-    global alex_core_instance, alex_bridge
-
-    logger.info("═══ PubCast AI v5.6 starting ═══")
-    t0 = time.time()
-
-    # 1. Hub
-    hub = Hub(DATA_DIR)
-    logger.info("[1/12] Hub ready")
-
-    # 2. RoomManager
-    room_manager = RoomManager()
-    logger.info("[2/12] RoomManager ready — %d rooms", len(room_manager.list_rooms()))
-
-    # 2b. PerformanceManager (optional)
-    if _HAS_PERFORMANCE and PerformanceManager is not None:
+async def lifespan(app: FastAPI):
+    global inference_manager
+    _shepard: ShepardService | None = None
+    _audio_worker: AudioJobWorker | None = None
+    # expose running services on app.state for control endpoints
+    app.state.shepard = None
+    app.state.audio_worker = None
+    if _INFERENCE_ENABLED:
         try:
-            performance_manager = PerformanceManager(
-                policy_path=Path("system_policy.json"),
-                state_path=DATA_DIR / "global" / "performance_profile.json",
-            )
-            application.state.performance_manager = performance_manager
-            logger.info("[2b/12] Performance profile active — %s", performance_manager.active_profile)
-        except Exception as exc:
-            logger.warning("[2b/12] Performance manager failed: %s", exc)
-    else:
-        logger.info("[2b/12] Performance profiles — not available")
-
-    # 2c. ChoreographyController (optional)
-    if _HAS_CHOREO and ChoreographyController is not None:
-        try:
-            requested_tick_hz = float(os.getenv("PUBCAST_CHOREO_TICK_HZ", "30"))
-            tick_hz = max(10.0, min(60.0, requested_tick_hz))
-            choreo_controller = ChoreographyController(hub=hub, tick_hz=tick_hz)
-            logger.info("[2c/12] Choreography controller ready — %.1f Hz", tick_hz)
-        except Exception as exc:
-            logger.warning("[2c/12] Choreography controller failed: %s", exc)
-    else:
-        logger.info("[2c/12] Choreography controller — not available")
-
-    # 2d. LightingEngine (optional)
-    if _HAS_LIGHTING and LightingEngine is not None and LightingHubPatch is not None:
-        try:
-            lighting_engine    = LightingEngine()
-            lighting_hub_patch = LightingHubPatch(lighting_engine, hub)
-            preset_count = len(list_lighting_presets() or []) if list_lighting_presets else 0
-            logger.info("[2d/12] Lighting engine ready — %d presets", preset_count)
-        except Exception as exc:
-            logger.warning("[2d/12] Lighting engine failed: %s", exc)
-    else:
-        logger.info("[2d/12] Lighting engine — not available")
-
-    # 3. Inference
-    inference = InferenceManager()
-    await inference.startup()
-    inf_status = inference.status()
-    logger.info(
-        "[3/12] Inference — Studio %s | Architect %s",
-        "ready"   if inf_status.get("studio",    {}).get("available") else "offline",
-        "ready"   if inf_status.get("architect", {}).get("available") else "optional/unavailable",
-    )
-
-    # 3a. Auth / user database
+            from modules.inference.manager import InferenceManager  # late import to avoid hard dependency
+            inference_manager = InferenceManager()
+            await inference_manager.startup()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to start InferenceManager; continuing without it")
+            inference_manager = None
     try:
-        await userdb.init_db()
-        await userdb.create_owner_if_not_exists()
-        auth_routes.set_auth_instance(auth_module)
-        application.include_router(auth_routes.router)
-        logger.info("[3a/12] Auth routes + user database ready")
-    except Exception as exc:
-        logger.warning("[3a/12] Auth system failed: %s", exc)
-
-    # 3b. Alex + Alex/Jeremy Bridge
-    try:
-        alex_core_instance = AlexCore(user_id='default', data_dir=DATA_DIR / 'alex')
-        alex_bridge = AlexJeremyBridge(DATA_DIR)
-        alex_routes.set_alex_instance(alex_core_instance)
-        alex_routes.set_alex_provider(alex_bridge.alex_for)
-        application.include_router(alex_routes.router)
-        logger.info("[3b/12] Alex core + Alex/Jeremy bridge ready")
-    except Exception as exc:
-        alex_core_instance = None
-        alex_bridge = None
-        logger.warning("[3b/12] Alex bridge failed: %s", exc)
-
-    # 4. CricketKeeper + SystemMemory (Jeremy Cricket infrastructure)
-    system_memory = SystemMemory(data_dir=DATA_DIR / "system")
-    await system_memory.init()
-    memory_routes_module.set_system_memory(system_memory)
-
-    if _HAS_CRICKET and CricketKeeper is not None:
-        cricket_keeper = CricketKeeper(data_dir=DATA_DIR / "jeremy")
-        await cricket_keeper.init()
-        memory_routes_module.set_cricket_keeper(cricket_keeper)
-        logger.info("[4/12] CricketKeeper + SystemMemory ready — memory routes live")
-    else:
-        logger.info("[4/12] SystemMemory ready — CricketKeeper not available")
-
-    application.include_router(memory_routes_module.router)
-
-    # 5. BotManager
-    bot_manager = BotManager(data_dir=DATA_DIR, hub=hub)
-    if cricket_keeper:
-        bot_manager.set_cricket_keeper(cricket_keeper)
-    hub.on_chat_callback = bot_manager.on_chat_message
-    logger.info("[5/12] BotManager ready — %d bots", len(bot_manager.list_configs()))
-
-    # 6. Cameras + Recording
-    cameras   = create_default_cameras()
-    recording = create_recording_service(DATA_DIR, cameras)
-    application.include_router(create_production_router(cameras, recording, hub))
-    logger.info(
-        "[6/12] Cameras (%d) + Recording (%d profiles) ready",
-        len(cameras.list_sources()), len(recording.list_profiles()),
-    )
-
-    # 7. Governance
-    governance = GovernanceEngine(DATA_DIR)
-    application.include_router(create_governance_router(governance, hub))
-    logger.info("[7/12] Governance ready — bans, freeze, consent, waiting room")
-
-    # 7b. PubWorld Hotspot API
-    try:
-        hotspot_router = create_hotspot_router(DATA_DIR)
-        application.include_router(hotspot_router)
-        logger.info("[7b] PubWorld hotspot API ready")
-    except Exception as exc:
-        logger.warning("[7b] PubWorld hotspot API failed: %s", exc)
-
-    # 7c. NEW: Structured Production Logging
-    try:
-        production_log = init_production_log(DATA_DIR / "logs")
-        emit("startup", "boot_start", {"version": "5.6"})
-        application.include_router(structured_log_routes.router)
-        logger.info("[7c] Structured production logging ready")
-    except Exception as exc:
-        logger.warning("[7c] Structured logging failed: %s", exc)
-
-    # 7d. NEW: Timeline Automation System
-    try:
-        timeline_routes.init_timeline_system(DATA_DIR)
-        timeline_player = timeline_routes.player
-        application.include_router(timeline_routes.router)
-        logger.info("[7d] Timeline automation ready")
-    except Exception as exc:
-        logger.warning("[7d] Timeline system failed: %s", exc)
-
-    # 7e. NEW: Waiting Room / Airlock
-    try:
-        waiting_room_manager = governance_waiting_room.init_waiting_room(auto_approve=False)
-        application.include_router(governance_waiting_room.router)
-        logger.info("[7e] Waiting room / airlock ready")
-    except Exception as exc:
-        logger.warning("[7e] Waiting room failed: %s", exc)
-
-    # 7e-ii. Seed default protocols into SystemMemory for Jeremy
-    if waiting_room_manager and system_memory:
+        # Start Shepard background service (auto-enabled via env/config)
+        _shepard = ShepardService(hub=hub, orchestrator=orchestrator, data_dir=DATA_DIR)
+        if _shepard._config.enabled:  # noqa: SLF001
+            _shepard.start()
+        app.state.shepard = _shepard
+        # Optional audio worker queue
+        if os.getenv("PUBCAST_AUDIO_QUEUE", "").strip().lower() in ("1","true","yes"):
+            _audio_worker = AudioJobWorker(DATA_DIR)
+            _audio_worker.start()
+            app.state.audio_worker = _audio_worker
+        # Optional AI worker pool
+        if _AI_WORKERS_ENABLED:
+            try:
+                from modules.ai_worker_pool import get_ai_worker_pool
+                global ai_worker_pool
+                ai_worker_pool = get_ai_worker_pool()
+                ai_worker_pool.startup()
+                app.state.ai_worker_pool = ai_worker_pool
+            except Exception:
+                logger.exception("Failed to start AIWorkerPool; continuing without it")
+                ai_worker_pool = None
+                app.state.ai_worker_pool = None
+        yield
+    finally:
+        if _shepard is not None:
+            try:
+                await _shepard.stop()
+            except Exception:
+                pass
+        if _audio_worker is not None:
+            try:
+                await _audio_worker.stop()
+            except Exception:
+                pass
+        # clear state handles
         try:
-            seeded = await governance_waiting_room.seed_default_protocols(system_memory)
-            if seeded:
-                logger.info("[7e-ii] Seeded %d protocols into SystemMemory", seeded)
-            else:
-                logger.info("[7e-ii] Protocols already seeded")
-        except Exception as exc:
-            logger.warning("[7e-ii] Protocol seed failed: %s", exc)
-
-    # 7f. NEW: Hotspot Trigger System
-    try:
-        hotspot_manager = hotspot_system.init_hotspot_system(DATA_DIR)
-        application.include_router(hotspot_system.router)
-        # Register default handlers
-        hotspot_manager.register_handler("transition", hotspot_system.default_transition_handler)
-        hotspot_manager.register_handler("animation", hotspot_system.default_animation_handler)
-        hotspot_manager.register_handler("custom", hotspot_system.default_custom_handler)
-        logger.info("[7f] Hotspot system ready — %d rooms", len(hotspot_manager._rooms))
-    except Exception as exc:
-        logger.warning("[7f] Hotspot system failed: %s", exc)
-
-    # 7g. NEW: Recording Pipeline Routes
-    try:
-        application.include_router(recording_pipeline_routes.router)
-        logger.info("[7g] Recording pipeline export routes ready")
-    except Exception as exc:
-        logger.warning("[7g] Recording pipeline routes failed: %s", exc)
-
-    # 7h. Bubble Stack spatial awareness routes
-    if _HAS_BUBBLE_STACK and bubble_routes_module is not None:
+            app.state.shepard = None
+            app.state.audio_worker = None
+        except Exception:
+            pass
+        if inference_manager is not None:
+            try:
+                await inference_manager.shutdown()
+            except Exception:
+                pass
+        # Shutdown AI worker pool if running
         try:
-            application.include_router(bubble_routes_module.router)
-            if BubbleJeremyAdapter is not None and hasattr(bubble_routes_module, "get_bubble_summary"):
-                bubble_jeremy_adapter = BubbleJeremyAdapter(bubble_routes_module.get_bubble_summary)
-                application.state.bubble_jeremy_adapter = bubble_jeremy_adapter
-            logger.info("[7h] Bubble Stack routes ready — /api/bubble-stack")
-        except Exception as exc:
-            bubble_jeremy_adapter = None
-            logger.warning("[7h] Bubble Stack disabled — route registration failed: %s", exc)
-    else:
-        logger.info("[7h] Bubble Stack unavailable — routes not registered")
-
-    # 8. BYOK
-    if _HAS_BYOK and BYOKManager is not None:
-        try:
-            byok_mgr = BYOKManager(DATA_DIR / "byok")
-            create_byok_router(application, byok_mgr)
-            bot_manager.set_byok_manager(byok_mgr)
-            logger.info("[8/12] BYOK ready — user-supplied API keys enabled")
-        except Exception as exc:
-            logger.warning("[8/12] BYOK failed: %s", exc)
-    else:
-        logger.info("[8/12] BYOK — not available")
-
-    # 9. ThinkingContext
-    if _HAS_THINKING_CONTEXT and tc_mount is not None:
-        try:
-            adapter    = PubCastContextAdapter(hub, bot_manager)
-            characters = _build_character_profiles()
-            tc_mount(
-                application, adapter,
-                characters=characters,
-                snapshot_path=str(DATA_DIR / "memory_snapshot.json"),
-                startup_rooms=["studio", "green_room"],
-            )
-            logger.info("[9/12] ThinkingContext mounted — %d characters", len(characters))
-        except Exception as exc:
-            logger.warning("[9/12] ThinkingContext failed: %s", exc)
-    else:
-        logger.info("[9/12] ThinkingContext — not available")
-
-    # 10. Ethereal Avatars
-    if _HAS_ETHEREAL and EtherealAvatarManager is not None:
-        try:
-            ethereal_mgr = EtherealAvatarManager(DATA_DIR)
-            application.include_router(create_ethereal_router(ethereal_mgr))
-            avatar_studio = AvatarStudioBridge(ethereal_mgr, cameras, hub)
-            application.include_router(create_avatar_studio_router(avatar_studio))
-            logger.info("[10/12] Ethereal Avatars ready — 57 joints, %d colors",
-                        len(ethereal_mgr.get_available_colors()))
-            logger.info("[10b/12] Avatar Studio bridge ready")
-        except Exception as exc:
-            logger.warning("[10/12] Ethereal Avatars failed: %s", exc)
-    else:
-        logger.info("[10/12] Ethereal Avatars — not available")
-
-    # 11. EVO Protocol — Switchblade + VDI + E-Pete
-    if _HAS_EVO and EVOOrchestrator is not None:
-        try:
-            evo_orchestrator = EVOOrchestrator(
-                active_character="pete",
-                llm_backend=inference,
-            )
-            logger.info("[11/12] EVO Protocol ready — Switchblade + VDI + E-Pete active")
-        except Exception as exc:
-            logger.warning("[11/12] EVO Protocol failed: %s", exc)
-    else:
-        logger.info("[11/12] EVO Protocol — not available")
-
-    # 12. Vault
-    if _HAS_VAULT and PubCastVault is not None:
-        try:
-            vault = PubCastVault(DATA_DIR / "vault")
-            application.include_router(create_vault_router(vault))
-            logger.info("[12/12] Vault ready — OS-level protection active")
-        except Exception as exc:
-            logger.warning("[12/12] Vault failed: %s", exc)
-    else:
-        logger.info("[12/12] Vault — not available")
-
-    logger.info("[12b] Doctor — %s", "ready" if _HAS_DOCTOR else "not available")
-
-    # ── New subsystems boot ────────────────────────────────────────────────────
-
-    # PubWorld router — live production state broadcast to map/world clients
-    if _HAS_PUBWORLD_ROUTER and _pubworld_router:
-        try:
-            application.include_router(_pubworld_router)
-            logger.info("[13] PubWorld router ready — /pubworld/ws live broadcast")
-        except Exception as exc:
-            logger.warning("[13] PubWorld router failed: %s", exc)
-
-    # Surface manager — placeable media screens in rooms
-    if _HAS_SURFACES:
-        try:
-            surface_manager = SurfaceManager(DATA_DIR)
-            logger.info("[14] Surface manager ready")
-        except Exception as exc:
-            logger.warning("[14] Surface manager failed: %s", exc)
-
-    # Conversation orchestrator — multi-agent turn coordination
-    if _HAS_ORCHESTRATOR:
-        try:
-            conv_orchestrator = ConversationOrchestrator()
-            # Wire CricketKeeper into orchestrator for memory-enriched replies
-            if cricket_keeper and hasattr(conv_orchestrator, 'set_cricket_keeper'):
-                conv_orchestrator.set_cricket_keeper(cricket_keeper)
-                logger.info("[15] ConversationOrchestrator ready — memory enrichment active")
-            else:
-                logger.info("[15] ConversationOrchestrator ready (no memory enrichment)")
-        except Exception as exc:
-            logger.warning("[15] ConversationOrchestrator failed: %s", exc)
-
-    # Voxel stack — asset manager + LLM generator + studio integration
-    if _HAS_VOXEL:
-        try:
-            voxel_library_path = _ensure_default_voxel_asset_library(DATA_DIR)
-            voxel_asset_manager = VoxelAssetManager(library_path=voxel_library_path)
-            logger.info("[16] Voxel asset manager ready — %d assets catalogued",
-                        len(voxel_asset_manager.get_all_assets()))
-        except Exception as exc:
-            logger.warning("[16] Voxel stack failed: %s", exc)
-
-    # Rust bridge — twin-engine connection (bulletproof → fallback → graceful miss)
-    if _HAS_BRIDGE:
-        try:
-            voxel_bridge = VoxelBridge(DATA_DIR)
-            logger.info("[17] Voxel bridge ready — %s", voxel_bridge.status() if hasattr(voxel_bridge, "status") and callable(voxel_bridge.status) else getattr(voxel_bridge, "status", "available"))
-        except Exception as exc:
-            logger.warning("[17] Voxel bridge not connected (renderer not running): %s", exc)
-
-    # e-PETE — internal twin-engine diagnostics only (guarded, non-user-facing)
-    if _HAS_PETE_ENHANCED and PeteEnhanced is not None and voxel_bridge is not None:
-        try:
-            candidate_pete = PeteEnhanced(
-                hub=hub,
-                bridge=voxel_bridge,
-                motion_system={},
-                data_dir=DATA_DIR,
-            )
-            pete_ready = await candidate_pete.initialize_twin_engine_system()
-            if pete_ready:
-                pete_enhanced = candidate_pete
-                if pete_enhanced_routes is not None:
-                    pete_enhanced_routes.set_pete_enhanced_instance(pete_enhanced)
-                    application.include_router(pete_enhanced_routes.router)
-                logger.info("[17b] e-PETE twin-engine diagnostics ready — internal route /api/internal/pete")
-            else:
-                pete_enhanced = None
-                logger.warning("[17b] e-PETE disabled — twin-engine dependencies not ready")
-        except Exception as exc:
-            pete_enhanced = None
-            logger.warning("[17b] e-PETE disabled — guarded initialization failed: %s", exc)
-    else:
-        logger.info("[17b] e-PETE — not available or bridge missing")
-
-    # Studio control — Iron Core preflight, audio matrix, dead man's switch
-    if _HAS_STUDIO_CONTROL:
-        try:
-            studio_pete = pete_enhanced if pete_enhanced is not None else _StudioPeteShim()
-            studio_control = StudioControl(hub=hub, pete=studio_pete, data_dir=DATA_DIR)
-            if _HAS_VOXEL and voxel_asset_manager is not None:
+            if getattr(app.state, 'ai_worker_pool', None) is not None:
                 try:
-                    voxel_studio = VoxelStudioIntegration(
-                        asset_manager=voxel_asset_manager,
-                        studio_control=studio_control,
-                        pete=pete_enhanced,
-                    )
-                    logger.info("[18a] Voxel studio integration ready")
-                except Exception as exc:
-                    logger.warning("[18a] Voxel studio integration failed: %s", exc)
-            studio_ws_handler = StudioWebSocketHandler(
-                studio_control=studio_control,
-            )
-            logger.info("[18] Studio Control ready — preflight + audio matrix active")
-        except Exception as exc:
-            logger.warning("[18] Studio Control failed: %s", exc)
-
-    # Unity bridge — Unity ↔ PubCast hub WebSocket
-    if _HAS_UNITY_BRIDGE:
-        try:
-            unity_bridge = UnityBridge(hub=hub)
-            logger.info("[19] Unity bridge ready — /unity/ws")
-        except Exception as exc:
-            logger.warning("[19] Unity bridge failed: %s", exc)
-
-    # MoCap integration — live motion capture streaming
-    if _HAS_MOCAP:
-        try:
-            mocap = MocapIntegration()
-            logger.info("[20] MoCap integration ready")
-        except Exception as exc:
-            logger.warning("[20] MoCap integration failed: %s", exc)
-
-    elapsed = time.time() - t0
-    logger.info("═══ PubCast AI v5.6 ready in %.1fs ═══", elapsed)
-    logger.info("    http://%s:%d/",                                       settings.host, settings.port)
-    logger.info("    Stage:         /static/stage.html")
-    logger.info("    Panoramic:     /static/stage_panoramic.html")
-    logger.info("    Control Room:  /static/control_room.html")
-    logger.info("    Studio Ctrl:   /studio-control")
-    logger.info("    World:         /static/world.html")
-    logger.info("    PubWorld Stage:/pubworld-stage")
-    logger.info("    Builder:       /builder")
-    logger.info("    Map:           /static/map.html")
-    logger.info("    Dressing:      /dressing")
-    logger.info("    Launch:        /launch")
-    logger.info("    Bar:           /bar")
-    logger.info("    Gallery:       /gallery")
-    logger.info("    Analytics:     /analytics")
-    logger.info("    Health:        /health")
-    logger.info("    Doctor:        /static/doctor.html  |  /api/doctor")
-    logger.info("    Lighting Lab:  /static/pubcast_lighting_explorer.html")
-    logger.info("    Voxel API:     /api/voxel/assets  |  /api/voxel/generate")
-    logger.info("    Studio API:    /api/studio/status  |  /api/studio/preflight")
-    logger.info("    Unity WS:      /unity/ws/{client_id}")
-    logger.info("    Studio WS:     /studio/ws")
-
-    # ── NEW: Wire event handlers ──────────────────────────────────────────────────
-    
-    # Timeline event handlers
-    if timeline_player:
-        try:
-            # Camera switches
-            async def handle_timeline_camera(params):
-                to_cam = params.get('to', 'cam_1')
-                transition = params.get('transition', 'cut')
-                if cameras:
-                    # Use correct method: set_program_source (not async)
-                    cameras.set_program_source(to_cam)
-                if production_log:
-                    emit("timeline", "camera_switch", {"to": to_cam, "transition": transition})
-            
-            # Lighting changes
-            async def handle_timeline_lighting(params):
-                preset = params.get('preset')
-                if lighting_engine and preset:
-                    # Use correct method: set_preset
-                    lighting_engine.set_preset(preset)
-                if production_log:
-                    emit("timeline", "lighting_change", {"preset": preset})
-            
-            # Bot chat
-            async def handle_timeline_chat(params):
-                user = params.get('user', '')
-                text = params.get('text', '')
-                room = params.get('room', 'studio')  # Default room for timeline events
-                if hub and user and text:
-                    # Use correct Hub method: post_chat_message(room, user_id, text)
-                    await hub.post_chat_message(room, user, text)
-                if production_log:
-                    emit("timeline", "bot_chat", {"user": user, "room": room})
-            
-            # Recording control
-            async def handle_timeline_record(params):
-                action = params.get('action')
-                if action == 'start' and recording:
-                    # Create recording session with timeline-specified parameters
-                    session = recording.start_session(
-                        session_id=None,  # Auto-generate
-                        sources=params.get('sources', ['cam_1']),  # Default to cam_1
-                        profile_id=params.get('profile_id', 'broadcast_mp4'),  # Default profile
-                        operator='timeline_automation',
-                        preset=params.get('preset'),
-                        host_override=True,  # Timeline has authority
-                        countdown_seconds=0,  # Immediate start for timeline
-                    )
-                    if production_log:
-                        emit("timeline", "recording_start", {"session_id": session.session_id})
-                elif action == 'stop' and recording:
-                    # Stop most recent active session
-                    active_sessions = [s for s in recording.list_sessions() 
-                                     if s.state in ['active', 'countdown']]
-                    if active_sessions:
-                        recording.stop_session(active_sessions[-1].session_id)
-                    if production_log:
-                        emit("timeline", "recording_stop", {})
-            
-            register_timeline_handler(EventType.CAMERA, handle_timeline_camera)
-            register_timeline_handler(EventType.LIGHTING, handle_timeline_lighting)
-            register_timeline_handler(EventType.CHAT, handle_timeline_chat)
-            register_timeline_handler(EventType.RECORD, handle_timeline_record)
-            
-            logger.info("[INIT] Timeline event handlers registered")
-        except Exception as exc:
-            logger.warning("[INIT] Timeline handler registration failed: %s", exc)
-    
-    # Hotspot event handlers
-    if hotspot_manager and hub:
-        try:
-            # Override default transition handler with hub broadcast
-            async def handle_hotspot_transition(action, user_id, hotspot_id, room):
-                destination = action.get("destination", "unknown")
-                spawn_point = action.get("spawnPoint", "default")
-                
-                await hub.broadcast_system_event({
-                    "type": "transition",
-                    "user_id": user_id,
-                    "from_room": room,
-                    "to_room": destination,
-                    "spawn_point": spawn_point,
-                })
-                
-                if production_log:
-                    emit("hotspots", "transition", {
-                        "user_id": user_id,
-                        "from": room,
-                        "to": destination,
-                    })
-                
-                return {"transitioned": True, "destination": destination}
-            
-            hotspot_manager.register_handler("transition", handle_hotspot_transition)
-            logger.info("[INIT] Hotspot event handlers registered")
-        except Exception as exc:
-            logger.warning("[INIT] Hotspot handler registration failed: %s", exc)
-    
-    # Camera switch logging
-    if cameras and production_log:
-        try:
-            original_set_program = cameras.set_program_source
-            def logged_set_program(source_id: str) -> bool:
-                from_cam = cameras.get_program_source()
-                result = original_set_program(source_id)
-                emit("cameras", "switch", {"from": from_cam.source_id if from_cam else "unknown", "to": source_id})
-                return result
-            cameras.set_program_source = logged_set_program
-            logger.info("[INIT] Camera logging enabled")
-        except Exception as exc:
-            logger.warning("[INIT] Camera logging failed: %s", exc)
-    
-    if production_log:
-        emit("startup", "boot_complete", {"duration_ms": int((time.time() - t0) * 1000)})
-
-    yield
-
-    # ── Shutdown ──────────────────────────────────────────────────────────────
-    logger.info("═══ PubCast AI shutting down ═══")
-    if choreo_controller and hasattr(choreo_controller, "stop"):
+                    app.state.ai_worker_pool.shutdown()
+                except Exception:
+                    logger.exception("Error shutting down AI worker pool")
+                app.state.ai_worker_pool = None
+        except Exception:
+            pass
         try:
             await choreo_controller.stop()
         except Exception:
             pass
-    if evo_orchestrator and hasattr(evo_orchestrator, "stop"):
         try:
-            await evo_orchestrator.stop()
+            await orchestrator.shutdown()
         except Exception:
             pass
-    if vault and hasattr(vault, "shutdown"):
-        vault.shutdown()
-    if cricket_keeper and hasattr(cricket_keeper, "close_all"):
-        await cricket_keeper.close_all()
-    logger.info("═══ PubCast AI stopped ═══")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Application
-# ═══════════════════════════════════════════════════════════════════════════════
+app = FastAPI(title="PubCast AI v9", lifespan=lifespan)
 
-app = FastAPI(
-    title="PubCast AI",
-    version="5.6.0",
-    description="Collaborative AI-Infused Virtual Production — Rear View Foresight LLC",
-    lifespan=lifespan,
+# ---- Operational Middlewares (configurable) ----
+try:
+    from modules.security.middleware import SecurityHeadersMiddleware
+    app.add_middleware(SecurityHeadersMiddleware)
+except Exception:
+    pass
+
+# GZip
+try:
+    gz_min = int(os.getenv("PUBCAST_GZIP_MIN", "1024"))
+    app.add_middleware(GZipMiddleware, minimum_size=max(0, gz_min))
+except Exception:
+    pass
+
+# Register AI router if available
+try:
+    app.include_router(ai_router)
+except Exception:
+    logger.debug("AI router not included")
+
+# Trusted hosts
+try:
+    raw_hosts = os.getenv("PUBCAST_TRUSTED_HOSTS", "*")
+    hosts = [h.strip() for h in raw_hosts.split(",") if h.strip()]
+    if hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
+except Exception:
+    pass
+
+# CORS
+try:
+    # Default to local dev origins; avoid wildcard by default
+    raw_origins = os.getenv(
+        "PUBCAST_ALLOWED_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000",
+    )
+    origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+    allow_credentials = os.getenv("PUBCAST_CORS_CREDENTIALS", "false").strip().lower() in ("1", "true", "yes")
+    # Do not allow credentials with wildcard origins
+    if ("*" in origins or origins == ["*"]) and allow_credentials:
+        allow_credentials = False
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+except Exception:
+    pass
+
+# Simple in-memory rate limiter (best-effort)
+class _SimpleRateLimiter:
+    def __init__(self, capacity: int = 100, window_seconds: int = 60) -> None:
+        self.capacity = int(capacity)
+        self.window = int(window_seconds)
+        self._buckets: Dict[str, List[float]] = {}
+
+    def allow(self, key: str) -> bool:
+        now = time.time()
+        bucket = self._buckets.setdefault(key, [])
+        # prune old
+        cutoff = now - self.window
+        i = 0
+        for i in range(len(bucket)):
+            if bucket[i] >= cutoff:
+                break
+        if i > 0:
+            del bucket[:i]
+        if len(bucket) >= self.capacity:
+            return False
+        bucket.append(now)
+        return True
+
+
+_rate_health = _SimpleRateLimiter(capacity=100, window_seconds=60)
+
+# Basic CORS (envâ€‘driven) and static mounts
+_origins_env = os.getenv("PUBCAST_ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").strip()
+if _origins_env == "*" or not _origins_env:
+    _allow_origins = ["*"]
+else:
+    _allow_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
+
+_allow_credentials = os.getenv("PUBCAST_CORS_CREDENTIALS", "false").strip().lower() in ("1","true","yes")
+if ("*" in _allow_origins or _allow_origins == ["*"]) and _allow_credentials:
+    _allow_credentials = False
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allow_origins,
+    allow_credentials=_allow_credentials,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-_cors_origins, _cors_credentials = _resolve_cors_origins()
-app.add_middleware(CORSMiddleware,
-    allow_origins=_cors_origins, allow_credentials=_cors_credentials,
-    allow_methods=["*"], allow_headers=["*"])
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-app.add_middleware(BodySizeLimitMiddleware)
+# Optional Trusted Host protection (production)
+_trusted_hosts_env = os.getenv("PUBCAST_TRUSTED_HOSTS", "").strip()
+if _trusted_hosts_env:
+    _trusted = [h.strip() for h in _trusted_hosts_env.split(",") if h.strip()]
+    if _trusted:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted)
 
-if STATIC_DIR.exists() and any(STATIC_DIR.iterdir()):
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-_assets_files = list(ASSETS_DIR.iterdir()) if ASSETS_DIR.exists() else []
-if _assets_files:
-    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Routes
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/")
-async def root():
-    for candidate in [STATIC_DIR / "index.html", STATIC_DIR / "waiting_room.html"]:
-        if candidate.exists():
-            return FileResponse(candidate)
-    return {"message": "PubCast AI v5.6", "health": "/health", "doctor": "/api/doctor"}
-
-
-@app.get("/airlock")
-async def serve_airlock():
-    """Serve the waiting room / airlock UI."""
-    airlock_path = STATIC_DIR / "waiting_room.html"
-    if airlock_path.exists():
-        return FileResponse(airlock_path)
-    return {"error": "Airlock UI not found", "expected": str(airlock_path)}
-
-
-@app.get("/health")
-async def health():
-    return {
-        "status": "ok", "version": "5.6.0",
-        "systems": {
-            "hub":                hub is not None,
-            "rooms":              len(room_manager.list_rooms()) if room_manager else 0,
-            "bots":               len(bot_manager.list_configs()) if bot_manager else 0,
-            "inference":          inference.status() if inference else None,
-            "cameras":            len(cameras.list_sources()) if cameras else 0,
-            "recording_profiles": len(recording.list_profiles()) if recording else 0,
-            "governance":         governance is not None,
-            "performance":        performance_manager is not None,
-            "choreography":       choreo_controller is not None,
-            "lighting":           lighting_engine is not None,
-            "cricket":            cricket_keeper is not None,
-            "byok":               byok_mgr is not None,
-            "thinking_context":   _HAS_THINKING_CONTEXT,
-            "ethereal":           _HAS_ETHEREAL and ethereal_mgr is not None,
-            "evo":                _HAS_EVO and evo_orchestrator is not None,
-            "vault":              _HAS_VAULT and vault is not None,
-            "doctor":             _HAS_DOCTOR,
-            # New subsystems
-            "pubworld_router":    _HAS_PUBWORLD_ROUTER,
-            "surfaces":           surface_manager is not None,
-            "voxel":              voxel_asset_manager is not None,
-            "voxel_bridge":       voxel_bridge is not None,
-            "studio_control":     studio_control is not None,
-            "unity_bridge":       unity_bridge is not None,
-            "mocap":              mocap is not None,
-            "orchestrator":       conv_orchestrator is not None,
-            # NEW: v5.6 Integration systems
-            "production_log":     production_log is not None,
-            "timeline":           timeline_player is not None,
-            "waiting_room":       waiting_room_manager is not None,
-            "hotspot_system":     hotspot_manager is not None,
-        },
-    }
-
-
-@app.get("/api/state/production")
-async def get_production_state():
-    return hub.get_production_state() if hub else {}
-
-
-@app.post("/api/state/production")
-async def update_production_state(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    if not hub:
-        raise HTTPException(503, "Hub not initialized")
-    body    = await _json_dict(request)
-    updated = hub.update_production_state(body)
-    await hub.broadcast_system_event({"type": "production_state", "payload": updated})
-    # Also push to PubWorld map clients
-    if _HAS_PUBWORLD_ROUTER and push_production_state_to_pubworld:
-        await push_production_state_to_pubworld(updated)
-    return updated
-
-
-@app.get("/api/state/user")
-async def get_user_state(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    """Return persisted display name / avatar colour for the requesting client."""
-    client_id = bound_actor(request=request, identity=identity, explicit_value=request.headers.get("X-Client-Id"), field_name="X-Client-Id", allow_privileged_override=False)
-    user_file  = DATA_DIR / "users" / f"{client_id}.json"
-    if user_file.exists():
-        try:
-            return read_json(user_file)
-        except Exception as exc:
-            logger.warning("user state read failed for %s: %s", client_id, exc)
-    return {"user_id": client_id, "display_name": "", "avatar_color": "#00e0ff", "badge": ""}
-
-
-@app.post("/api/state/user")
-async def set_user_state(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    """Persist display name / avatar colour for the requesting client."""
-    body       = await _json_dict(request)
-    client_id  = bound_actor(request=request, identity=identity, explicit_value=request.headers.get("X-Client-Id"), field_name="X-Client-Id", allow_privileged_override=False)
-    user_file  = DATA_DIR / "users" / f"{client_id}.json"
-    payload    = {
-        "user_id":      client_id,
-        "display_name": str(body.get("display_name", ""))[:64],
-        "avatar_color": str(body.get("avatar_color", "#00e0ff"))[:20],
-        "badge":        str(body.get("badge", ""))[:32],
-    }
-    write_json(user_file, payload)
-    if hub:
-        await hub.broadcast_presence_update(client_id, payload["display_name"])
-    return {"ok": True, **payload}
-
-
-@app.post("/api/upload")
-async def upload_file(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    """Accept a multipart file upload and save it to data/imports/."""
-    from fastapi import UploadFile, File, Form
-    import shutil, mimetypes
+# GZip responses for larger payloads
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Security middlewares (enterprise)
+try:
+    from modules.security.middleware import SecurityHeadersMiddleware, RateLimitMiddleware, RequestIDMiddleware
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    # Apply app-wide rate limiting (HTTP only; WS unaffected)
+    app.add_middleware(RateLimitMiddleware)
+except Exception:
+    pass
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+_serve_data = os.getenv("PUBCAST_SERVE_DATA", "false").strip().lower() in ("1","true","yes")
+if _serve_data:
     try:
-        form   = await request.form()
-        upload = form.get("file")
-        target = str(form.get("target", "")).strip()
-        if not upload or not hasattr(upload, "filename"):
-            raise HTTPException(400, "No file provided")
-        safe_name = sanitize_filename(upload.filename or "upload") or "upload"
-        dest_dir  = DATA_DIR / "imports"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = unique_child_path(dest_dir, safe_name)
-        with dest_path.open("wb") as out:
-            shutil.copyfileobj(upload.file, out)
-        logger.info("Upload received: %s → %s (target=%s)", upload.filename, dest_path, target)
-        return {"ok": True, "filename": safe_name, "target": target, "size": dest_path.stat().st_size}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Upload error: %s", exc)
-        raise HTTPException(500, str(exc))
+        app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
+    except Exception:
+        pass
 
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+app.include_router(audio_router)
+from modules.media_router import router as media_router
+from modules.edit_router import router as edit_router
+app.include_router(media_router)
+app.include_router(edit_router)
+# Security routers (auth, keys, GDPR) — optional if dependencies installed
+try:
+    from modules.security.users_router import router as users_router
+    from modules.security.apikeys_router import router as keys_router
+    from modules.security.gdpr_router import router as gdpr_router
+    from modules.security.users_admin_router import router as users_admin_router
+    app.include_router(users_router)
+    app.include_router(keys_router)
+    app.include_router(gdpr_router)
+    app.include_router(users_admin_router)
+    app.include_router(providers_router)
+except Exception:
+    pass
 
-@app.get("/api/bots")
-async def list_bots():
-    return [cfg.model_dump() for cfg in bot_manager.list_configs()] if bot_manager else []
+# Shepard/Cricket helper endpoints (nudge/time-buyer) — minimal implementation
+from modules.security.middleware import require_permission_or_admin
+from modules.security.auth import Permission
 
-
-@app.post("/api/bots")
-async def register_bot(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    if not bot_manager:
-        raise HTTPException(503, "BotManager not initialized")
-    body   = await _json_dict(request)
-    config = BotConfig(**body)
-    bot_manager.upsert_config(config)
-    return {"ok": True, "bot_id": config.bot_id}
-
-
-@app.delete("/api/bots/{bot_id}")
-async def delete_bot(bot_id: str, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    if bot_manager:
-        bot_manager.delete_config(bot_id)
+@app.post("/api/shepard/stall", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_MONITOR))])
+async def shepard_stall(body: Dict[str, Any] = Body(default_factory=dict)):
+    room = str(body.get("room") or "control").strip()
+    ms = int(body.get("ms") or 800)
+    line = str(body.get("message") or "Hang tight — brief pause while we sort something out.")
+    # Post as a bot identity so UI badges can style it
+    await hub.post_chat_message(room, "bot-cricket", line)
+    # Also mark production_state with a subtle cue if desired
+    try:
+        updated = await hub.update_production_state({"cue": {"stall_ms": ms, "t": time.time()}})
+        await hub.broadcast_system_event({"type": "production_state", "payload": updated})
+    except Exception:
+        pass
     return {"ok": True}
 
 
-@app.get("/api/rooms")
-async def list_rooms():
-    return room_manager.to_dict() if room_manager else {"rooms": []}
+@app.post("/api/shepard/invite", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_MONITOR))])
+async def shepard_invite(body: Dict[str, Any] = Body(default_factory=dict)):
+    room = str(body.get("room") or "control").strip()
+    target = str(body.get("target") or "guest").strip()
+    line = str(body.get("message") or f"{target.capitalize()}, want to jump in with your thoughts?")
+    await hub.post_chat_message(room, "bot-cricket", line)
+    return {"ok": True}
 
 
-@app.post("/api/inference/generate")
-async def generate_text(request: Request):
-    if not inference:
-        raise HTTPException(503, "Inference not initialized")
-    body = await _json_dict(request)
-    return await inference.generate_text(
-        prompt          = body.get("prompt", ""),
-        temperature     = body.get("temperature", 0.7),
-        max_tokens      = body.get("max_tokens", 256),
-        requested_route = body.get("route", body.get("role", "auto")),
-        task_type       = body.get("task_type", ""),
-        user_facing     = body.get("user_facing"),
-        allow_fallback  = body.get("allow_fallback"),
-    )
+ 
 
 
-@app.post("/api/inference/tts")
-async def text_to_speech(request: Request):
-    if not inference:
-        raise HTTPException(503, "Inference not initialized")
-    body = await _json_dict(request)
-    return await inference.synthesize_speech(
-        text  = body.get("text", ""),
-        voice = body.get("voice", "default"),
-    )
+def _get_or_set_uid(request: Request, response: Optional[Response] = None) -> str:
+    uid = request.cookies.get("pubcast_uid")
+    if not uid:
+        uid = str(uuid.uuid4())
+        if response is not None:
+            response.set_cookie("pubcast_uid", uid, max_age=60 * 60 * 24 * 365)
+    return uid
 
 
-@app.get("/api/lighting/presets")
-async def get_lighting_presets():
-    if not lighting_engine:
-        return {"available": False, "presets": []}
-    presets = list_lighting_presets() if list_lighting_presets else []
-    return {"available": True, "presets": presets}
+@app.get("/health")
+def health():
+    """Lightweight health endpoint with optional camera stream stats and audio clock metrics.
 
-
-@app.post("/api/lighting/apply")
-async def apply_lighting_preset(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    if not lighting_engine:
-        raise HTTPException(503, "Lighting engine not initialized")
-    body = await _json_dict(request)
-    preset = body.get("preset", "normal")
-    try:
-        lighting_engine.apply_preset(preset)
-        await hub.broadcast_system_event({"type": "lighting_preset", "payload": {"preset": preset}})
-        return {"ok": True, "preset": preset}
-    except Exception as exc:
-        raise HTTPException(400, str(exc))
-
-
-@app.get("/api/evo/status")
-async def evo_status():
-    if not _HAS_EVO or evo_orchestrator is None:
-        return {"available": False}
-    try:
-        s = evo_orchestrator.get_status() if hasattr(evo_orchestrator, "get_status") else {}
-        return {"available": True, **s}
-    except Exception as exc:
-        return {"available": True, "error": str(exc)}
-
-
-@app.get("/api/doctor")
-async def doctor_report():
-    if not _HAS_DOCTOR or _run_doctor_fn is None:
-        return {"available": False, "message": "Doctor module not loaded"}
-    try:
-        return _run_doctor_fn(DATA_DIR)
-    except Exception as exc:
-        return {"available": True, "error": str(exc)}
-
-
-@app.get("/api/doctor/launch-gate")
-async def doctor_launch_gate():
-    """Return only the launch-gate sub-report — used by doctor.html to decide
-    whether to show a GO / NO-GO banner without fetching the full report."""
-    if not _HAS_DOCTOR or _run_launch_gate_fn is None:
-        return {"allowed": True, "reason": "Doctor module not loaded — assuming OK", "blocking_checks": []}
-    try:
-        return _run_launch_gate_fn(DATA_DIR)
-    except Exception as exc:
-        return {"allowed": False, "reason": str(exc), "blocking_checks": []}
-
-
-# ─── Choreography routes ───────────────────────────────────────────────────────
-
-@app.get("/api/choreo/actions")
-async def choreo_list_actions():
-    """Return the full action catalogue (label, duration, category) for the UI."""
-    if choreo_controller is None:
-        # Degrade gracefully: return the static default table so the UI still renders
-        from modules.choreography_controller import DEFAULT_ACTIONS
-        return {"available": False, "actions": DEFAULT_ACTIONS}
-    return {"available": True, "actions": choreo_controller.list_actions()}
-
-
-@app.get("/api/choreo/constraints")
-async def choreo_get_constraints():
-    """Return current MotionConstraints as a plain dict."""
-    if choreo_controller is None:
-        from dataclasses import asdict
-        from modules.choreography_controller import MotionConstraints
-        return {"available": False, "constraints": asdict(MotionConstraints())}
-    return {"available": True, "constraints": choreo_controller.get_constraints()}
-
-
-@app.post("/api/choreo/constraints")
-async def choreo_set_constraints(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    """Patch MotionConstraints fields.
-    Accepts either a flat body  { enabled, max_horizontal_speed, … }
-    or the wrapped shape        { constraints: { enabled, … } }
-    that stage_panoramic.html sends.
+    This returns a basic ok flag and, when available, per-camera stream
+    statistics gathered from the global `camera_manager`, and audio master clock metrics.
     """
-    if choreo_controller is None:
-        raise HTTPException(503, "Choreography controller not initialised")
-    body = await _json_dict(request)
-    # Unwrap nested { constraints: {...} } if present
-    patch = body.get("constraints", body) if isinstance(body, dict) else body
-    updated = choreo_controller.set_constraints(patch)
-    return {"ok": True, "constraints": updated}
-
-
-@app.post("/api/choreo/cue")
-async def choreo_cue_action(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    """Fire an action cue for an avatar.
-    Body: { room, avatar_id, action, intensity?, duration?, props? }
-    Broadcasts an avatar_action_cue WS event to all room subscribers.
-    """
-    if choreo_controller is None:
-        raise HTTPException(503, "Choreography controller not initialised")
-    body = await _json_dict(request)
-    room      = body.get("room", "studio")
-    avatar_id = body.get("avatar_id", "")
-    action    = body.get("action", "")
-    if not avatar_id or not action:
-        raise HTTPException(400, "avatar_id and action are required")
+    out: Dict[str, Any] = {"ok": True}
     try:
-        result = await choreo_controller.cue_action(
-            room      = room,
-            avatar_id = avatar_id,
-            action    = action,
-            intensity = float(body.get("intensity", 1.0)),
-            duration  = body.get("duration"),
-            props     = body.get("props"),
-        )
-        return {"ok": True, "cue": result}
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-
-# ─── Performance profile route ─────────────────────────────────────────────────
-
-@app.get("/api/performance/status")
-async def performance_status():
-    """Return the active performance profile and its settings.
-    stage_panoramic.html uses this to gate high-fidelity render features."""
-    if performance_manager is None:
-        return {
-            "available": False,
-            "profile": "medium",
-            "settings": {"architect_enabled": True, "max_fps": 30, "shadows": True},
-        }
-    snap = performance_manager.current_profile_snapshot()
-    return {"available": True, **snap}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Static page routes — serve pages from the pubworld build
-# ═══════════════════════════════════════════════════════════════════════════════
-
-TEMPLATE_PAGES = {
-    "analytics.html",
-    "bar.html",
-    "control.html",
-    "dressing.html",
-    "dressing_foundry.html",
-    "gallery.html",
-}
-templates = Jinja2Templates(directory=str(STATIC_DIR))
-
-def _page(name: str, request: Request):
-    """Return a rendered template for Jinja pages or a raw static file otherwise."""
-    p = STATIC_DIR / name
-    if not p.exists():
-        raise HTTPException(404, f"Page not found: {name}")
-    if name in TEMPLATE_PAGES:
-        return templates.TemplateResponse(request, name)
-    return FileResponse(p)
-
-@app.get("/control",         include_in_schema=False) 
-async def page_control(request: Request):        return _page("control.html", request)
-
-@app.get("/studio-control",  include_in_schema=False)
-async def page_studio_control(request: Request): return _page("studio_control_room.html", request)
-
-@app.get("/dressing",        include_in_schema=False)
-async def page_dressing(request: Request):       return _page("dressing.html", request)
-
-@app.get("/dressing-foundry",include_in_schema=False)
-async def page_dressing_foundry(request: Request): return _page("dressing_foundry.html", request)
-
-@app.get("/pubworld-stage",  include_in_schema=False)
-async def page_pubworld_stage(request: Request): return _page("pubworld_stage.html", request)
-
-@app.get("/builder",         include_in_schema=False)
-async def page_builder(request: Request):        return _page("builder.html", request)
-
-@app.get("/launch",          include_in_schema=False)
-async def page_launch(request: Request):         return _page("launch.html", request)
-
-@app.get("/bar",             include_in_schema=False)
-async def page_bar(request: Request):            return _page("bar.html", request)
-
-@app.get("/gallery",         include_in_schema=False)
-async def page_gallery(request: Request):        return _page("gallery.html", request)
-
-@app.get("/analytics",       include_in_schema=False)
-async def page_analytics(request: Request):      return _page("analytics.html", request)
-
-# Compatibility aliases for legacy/front-end navigation paths that several
-# bundled pages still use directly. Keep these small and explicit so the UI
-# stops shipping dead links during static navigation flows.
-@app.get("/world",           include_in_schema=False)
-async def page_world(request: Request):          return _page("world.html", request)
-
-@app.get("/stage",           include_in_schema=False)
-async def page_stage(request: Request):          return _page("stage.html", request)
-
-@app.get("/studio",          include_in_schema=False)
-async def page_studio(request: Request):         return _page("stage_panoramic.html", request)
-
-@app.get("/byok",            include_in_schema=False)
-async def page_byok(request: Request):           return _page("byok.html", request)
-
-@app.get("/api/byok")
-async def byok_root_info():
-    """Compatibility endpoint for older pages that probe /api/byok directly."""
-    return {
-        "ok": True,
-        "mounted": byok_mgr is not None,
-        "catalog": "/api/byok/catalog",
-        "hardware": "/api/byok/hardware",
-        "models": "/api/byok/models",
-        "ollama_status": "/api/byok/ollama/status",
-    }
-
-@app.get("/map",             include_in_schema=False)
-async def page_map(request: Request):            return _page("map.html", request)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PubWorld Scenes API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/pubworld/scenes")
-async def pw_list_scenes():
-    if not _HAS_PUBWORLD_SCENES:
-        return {"scenes": []}
-    return {"scenes": [s.model_dump() for s in list_scenes(DATA_DIR)]}
-
-@app.post("/api/pubworld/scenes")
-async def pw_create_scene(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    if not _HAS_PUBWORLD_SCENES:
-        raise HTTPException(503, "PubWorld scene manager not available")
-    body = await _json_dict(request)
-    name = body.get("name", "Untitled Scene")
-    desc = body.get("description", "")
-    scene = create_scene(DATA_DIR, name=name, description=desc)
-    return {"ok": True, "scene": scene.model_dump()}
-
-@app.get("/api/pubworld/scenes/{scene_id}")
-async def pw_get_scene(scene_id: str):
-    if not _HAS_PUBWORLD_SCENES:
-        raise HTTPException(503, "PubWorld scene manager not available")
-    scene = get_scene(DATA_DIR, scene_id)
-    if not scene:
-        raise HTTPException(404, f"Scene not found: {scene_id}")
-    return scene.model_dump()
-
-@app.get("/api/pubworld/props")
-async def pw_list_props(scene_id: str | None = None):
-    if list_props is None:
-        return {"props": []}
-    props = list_props(DATA_DIR, scene_id=scene_id)
-    return {"props": [p.model_dump() for p in props]}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Surfaces API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/surfaces")
-async def list_surfaces_ep(room_id: str = None):
-    if surface_manager is None:
-        return {"surfaces": []}
-    surfaces = await surface_manager.list_surfaces(room_id=room_id)
-    return {"surfaces": [s.model_dump() for s in surfaces]}
-
-@app.post("/api/surfaces")
-async def create_surface_ep(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    if surface_manager is None:
-        raise HTTPException(503, "Surface manager not available")
-    body = await _json_dict(request)
-    s = await surface_manager.create_surface(
-        room_id=body.get("room_id", "studio"),
-        label=body.get("label", "Screen"),
-        kind=body.get("kind", "custom"),
-        quad=body.get("quad"),
-        creator_id=bound_actor(request=request, identity=identity, explicit_value=body.get("creator_id"), field_name="creator_id"),
-        media_mode=body.get("media_mode", "video"),
-    )
-    return {"ok": True, "surface": s.model_dump()}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Projects / autosave API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/projects/{slug}/autosaves")
-async def list_project_autosaves(slug: str):
-    if not _HAS_PROJECTS:
-        return {"autosaves": []}
-    return {"autosaves": list_autosaves(DATA_DIR, slug)}
-
-@app.post("/api/projects/{slug}/autosaves")
-async def save_project_autosave(slug: str, request: Request):
-    if not _HAS_PROJECTS or save_autosave_snapshot is None:
-        raise HTTPException(503, "Project autosave system unavailable")
-    body = await _json_dict(request)
-    session_id = body.get('session_id')
-    if session_id:
-        try:
-            body['session_credits'] = session_runtime.session_credit_block(DATA_DIR, session_id)
-        except Exception:
-            pass
-    save_path = await save_autosave_snapshot(DATA_DIR, slug, body)
-    saved = json.loads(save_path.read_text(encoding="utf-8"))
-    return {
-        "ok": True,
-        "path": str(save_path),
-        "save_manifest": saved.get("save_manifest", {}),
-        "project_identity": saved.get("project_identity", {}),
-        "session_credits": saved.get("session_credits", {}),
-    }
-
-@app.post("/api/projects/{slug}/savefile/preview")
-async def preview_project_savefile(slug: str, request: Request):
-    body = await _json_dict(request)
-    wrapped = attach_save_metadata(slug=slug, payload=body, save_kind="manual_save")
-    return {"ok": True, "savefile": wrapped}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Voxel API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/projects/{slug}/credits/export")
-async def export_project_credits(slug: str, mode: str = 'industry_standard'):
-    return {"ok": True, **credits_export.generate_credits(DATA_DIR, slug, mode=mode)}
-
-
-
-@app.get("/api/projects/{slug}/credits/crawl.txt")
-async def export_project_credit_crawl(slug: str, mode: str = 'industry_standard'):
-    data = credits_export.generate_credits(DATA_DIR, slug, mode=mode)
-    content = credits_export.render_credit_crawl(data)
-    return JSONResponse({'ok': True, 'filename': f'{slug}_credits.txt', 'content': content})
-
-@app.get("/api/voxel/assets")
-async def voxel_list_assets(category: str = None):
-    if voxel_asset_manager is None:
-        return {"available": False, "assets": []}
-    if category:
-        assets = voxel_asset_manager.get_assets_by_category(category)
-    else:
-        assets = voxel_asset_manager.get_all_assets()
-    return {"available": True, "count": len(assets),
-            "assets": [a.to_dict() for a in assets]}
-
-@app.get("/api/voxel/assets/search")
-async def voxel_search_assets(q: str = ""):
-    if voxel_asset_manager is None:
-        return {"assets": []}
-    results = voxel_asset_manager.search_assets(q)
-    return {"assets": [a.to_dict() for a in results]}
-
-@app.post("/api/voxel/generate")
-async def voxel_generate_ep(request: Request):
-    """Generate voxel blocks from a text prompt via LLM (Anthropic→OpenAI→Gemini→local)."""
-    if not _HAS_VOXEL or voxel_generate is None:
-        raise HTTPException(503, "Voxel generator not available")
-    body = await _json_dict(request)
-    prompt = body.get("prompt", "").strip()
-    if not prompt:
-        raise HTTPException(400, "prompt required")
-    provider = body.get("provider", "auto")
+        # include camera stream telemetry if camera_manager is available
+        cams = {}
+        for s in (camera_manager.list_sources() if "camera_manager" in globals() else []):
+            try:
+                cams[s.source_id] = camera_manager.stream_stats(s.source_id)
+            except Exception:
+                logger.debug("Failed to collect stream_stats for %s", s.source_id, exc_info=True)
+                cams[s.source_id] = {"error": "unavailable"}
+        if cams:
+            out["cameras"] = cams
+    except Exception:
+        # Do not fail the health endpoint for telemetry errors
+        logger.debug("Error while collecting camera telemetry", exc_info=True)
+    
+    # Include audio clock metrics if available
     try:
-        label, blocks = await voxel_generate(prompt, provider=provider)
-        return {"ok": True, "label": label, "blocks": blocks, "count": len(blocks) if blocks else 0}
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
+        from modules.audio_clock import get_master_clock
+        clock = get_master_clock()
+        if clock:
+            out["audio_clock"] = {
+                "now": round(clock.now(), 3),
+                "adjustments": clock.adjustments,
+                "total_adjusted_seconds": round(clock.total_adjusted_seconds, 6),
+                "underrun_count": clock.underrun_count,
+                "overrun_count": clock.overrun_count,
+            }
+    except Exception:
+        logger.debug("Error while collecting audio clock telemetry", exc_info=True)
 
-@app.get("/api/voxel/status")
-async def voxel_status():
-    return {
-        "asset_manager": voxel_asset_manager is not None,
-        "studio_integration": voxel_studio is not None,
-        "bridge": voxel_bridge is not None,
-        "bridge_status": (voxel_bridge.status() if hasattr(voxel_bridge, "status") and callable(voxel_bridge.status) else getattr(voxel_bridge, "status", None)) if voxel_bridge else None,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Studio Control API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/studio/status")
-async def studio_status():
-    if studio_control is None:
-        return {"available": False}
+    # Include AI capability status if available
     try:
-        return {"available": True, **studio_control.get_status_summary()}
-    except Exception as exc:
-        return {"available": True, "error": str(exc)}
+        from modules.capability_probe import get_capability_probe
+        probe = get_capability_probe()
+        caps = probe.probe_all()
+        # Include simplified capability status (just available flags)
+        out["capabilities"] = {k: {"available": v.get("available"), "status": v.get("status")} for k, v in caps.items()}
+    except Exception:
+        logger.debug("Error while collecting capability telemetry", exc_info=True)
 
-@app.post("/api/studio/preflight")
-async def studio_preflight(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    """Trigger the 5-second preflight countdown."""
-    if studio_control is None:
-        raise HTTPException(503, "Studio Control not available")
-    body = await _json_dict(request)
-    room = body.get("room", "studio")
-    try:
-        result = await studio_control.start_preflight(room=room)
-        return {"ok": True, "result": result}
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
+    return out
 
-@app.post("/api/studio/emergency-save")
-async def studio_emergency_save(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    """Trigger the dead man's switch emergency save."""
-    if studio_control is None:
-        raise HTTPException(503, "Studio Control not available")
-    try:
-        result = await studio_control.emergency_save()
-        return {"ok": True, "result": result}
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Unity Bridge API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/unity/status")
-async def unity_status():
-    if unity_bridge is None:
-        return {"available": False}
-    return {"available": True, **unity_bridge.status()}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MoCap API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/api/mocap/status")
-async def mocap_status():
-    if mocap is None:
-        return {"available": False}
-    try:
-        s = mocap.get_status() if hasattr(mocap, "get_status") else {}
-        return {"available": True, **s}
-    except Exception as exc:
-        return {"available": True, "error": str(exc)}
-
-@app.post("/api/mocap/start")
-async def mocap_start(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    if mocap is None:
-        raise HTTPException(503, "MoCap not available")
-    body = await _json_dict(request)
-    try:
-        result = await mocap.start(rig_id=body.get("rig_id", "rig-01"))
-        return {"ok": True, "result": result}
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
-
-@app.post("/api/mocap/stop")
-async def mocap_stop(identity: Dict[str, Any] = Depends(require_role("mod"))):
-    if mocap is None:
-        raise HTTPException(503, "MoCap not available")
-    try:
-        await mocap.stop()
-        return {"ok": True}
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Missing route stubs — frontend calls these; wire to real backends where
-# available, return safe empty responses otherwise so pages don't 404.
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/health")
-async def api_health_alias():
-    """Alias — some pages call /api/health instead of /health."""
-    return {"status": "ok", "version": "5.6.0"}
+def api_health(request: Request):
+    # rate limit by client host (best-effort fallback to global)
+    key = getattr(request.client, "host", None) or "global"
+    if not _rate_health.allow(str(key)):
+        raise HTTPException(status_code=429, detail="rate_limited")
+    return {"ok": True}
+
+
+# ---------- Templates ----------
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    resp = templates.TemplateResponse("index.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/dressing", response_class=HTMLResponse)
+def dressing(request: Request):
+    resp = templates.TemplateResponse("dressing.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+# Back-compat aliases from older/static links
+@app.get("/dressing-room")
+def dressing_alias() -> RedirectResponse:
+    return RedirectResponse(url="/dressing", status_code=307)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin(request: Request):
+    resp = templates.TemplateResponse("admin.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/map", response_class=HTMLResponse)
+def world(request: Request):
+    resp = templates.TemplateResponse("world.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/control", response_class=HTMLResponse)
+def control(request: Request):
+    resp = templates.TemplateResponse("control.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+@app.get("/builder", response_class=HTMLResponse)
+def builder(request: Request):
+    resp = templates.TemplateResponse("builder.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/gallery", response_class=HTMLResponse)
+def gallery(request: Request):
+    resp = templates.TemplateResponse("gallery.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/pub", response_class=HTMLResponse)
+def pub(request: Request):
+    # Pub main room (front corridor). Sub-areas handled client-side in bar.js
+    resp = templates.TemplateResponse("bar.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/outside", response_class=HTMLResponse)
+def outside(request: Request):
+    # Parking lot / exterior facade for Josie's front door
+    resp = templates.TemplateResponse("outside.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/pose-demo", response_class=HTMLResponse)
+def pose_demo(request: Request):
+    resp = templates.TemplateResponse("pose_demo.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/scanner", response_class=HTMLResponse)
+def scanner(request: Request):
+    resp = templates.TemplateResponse("scanner.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/tracking/print-tags", response_class=HTMLResponse)
+def print_tags(request: Request):
+    # Query: ?ids=1,2,3&size_mm=50
+    try:
+        raw = request.query_params.get("ids") or ""
+        ids = [s for s in (raw.split(",") if raw else []) if s]
+        size_mm = int(request.query_params.get("size_mm") or 50)
+    except Exception:
+        ids = []
+        size_mm = 50
+    resp = templates.TemplateResponse("print_tags.html", {"request": request, "ids": ids, "size_mm": size_mm})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+def analytics(request: Request):
+    resp = templates.TemplateResponse("analytics.html", {"request": request})
+    _get_or_set_uid(request, resp)
+    return resp
+
+
+# ---------- Avatars ----------
+@app.get("/api/avatars/presets")
+def api_avatar_presets():
+    presets = [
+        {
+            "preset_id": p.preset_id,
+            "name": p.name,
+            "description": p.description,
+        }
+        for p in list_presets()
+    ]
+    return {"presets": presets}
+
+
+@app.get("/api/avatar/me")
+async def api_avatar_me(request: Request):
+    uid = _get_or_set_uid(request)
+    state = await load_avatar_async(DATA_DIR, uid)
+    return state.dict()
+
+
+@app.post("/api/avatar/me")
+async def api_avatar_save(request: Request):
+    uid = _get_or_set_uid(request)
+    payload = await request.json()
+    state = await save_avatar_async(DATA_DIR, uid, payload or {})
+    # Invalidate presence cache for updated avatar
+    hub.invalidate_user_cache(uid)
+    return state.dict()
+
+
+@app.get("/api/avatars/assets")
+def get_avatar_assets():
+    manifest = DATA_DIR / "avatar_assets.json"
+    if not manifest.exists():
+        return {"packs": []}
+    return json.loads(manifest.read_text(encoding="utf-8"))
+
+
+# ---------- Avatar scans and photos ----------
+@app.post("/api/avatar/scan")
+async def api_avatar_scan_upload(file: UploadFile):
+    name = sanitize_filename(file.filename or "scan")
+    if not allowed_upload_extension(name):
+        raise HTTPException(status_code=400, detail="unsupported_extension")
+    rel_dir = "uploads/avatar_scans"
+    (ASSETS_DIR / rel_dir).mkdir(parents=True, exist_ok=True)
+    dest = ASSETS_DIR / rel_dir / name
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = await file.read(512 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"write_failed: {exc}")
+    rel_path = f"/assets/{rel_dir}/{name}"
+    return {"ok": True, "scan": {"name": name, "url": rel_path}}
+
+
+@app.get("/api/avatar/scans")
+def api_avatar_scans_list():
+    rel_dir = "uploads/avatar_scans"
+    root = ASSETS_DIR / rel_dir
+    items = []
+    if root.exists():
+        for f in root.iterdir():
+            if not f.is_file():
+                continue
+            items.append({"name": f.name, "url": f"/assets/{rel_dir}/{f.name}", "size": f.stat().st_size})
+    items.sort(key=lambda x: x["name"].lower())
+    return {"scans": items}
+
+
+@app.post("/api/avatar/scan/apply")
+async def api_avatar_scan_apply(request: Request, body: Dict[str, Any]):
+    uid = _get_or_set_uid(request)
+    url = str(body.get("url") or "").strip()
+    if not url.startswith("/assets/"):
+        raise HTTPException(status_code=400, detail="invalid_scan_url")
+    state = await save_avatar_async(DATA_DIR, uid, {"glb_asset": url.lstrip("/"), "asset_pack": "scan"})
+    return state.dict()
+
+
+@app.post("/api/avatar/photo")
+async def api_avatar_photo_upload(request: Request, file: UploadFile):
+    name = sanitize_filename(file.filename or "photo.jpg")
+    if not allowed_upload_extension(name):
+        raise HTTPException(status_code=400, detail="unsupported_extension")
+    rel_dir = "uploads/avatar_photos"
+    (ASSETS_DIR / rel_dir).mkdir(parents=True, exist_ok=True)
+    # Prefix with uid and timestamp to avoid collisions
+    uid = _get_or_set_uid(request)
+    base, dot, ext = name.partition(".")
+    final_name = f"{uid}_{int(time.time())}.{ext or 'jpg'}"
+    dest = ASSETS_DIR / rel_dir / final_name
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = await file.read(512 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"write_failed: {exc}")
+    rel_path = f"/assets/{rel_dir}/{final_name}"
+    state = await save_avatar_async(DATA_DIR, uid, {"photo_texture": rel_path.lstrip("/")})
+    return {"ok": True, "photo": {"url": rel_path}, "avatar": state.dict()}
+
+
+@app.post("/api/avatar/voice")
+async def api_avatar_voice_upload(request: Request, file: UploadFile):
+    name = sanitize_filename(file.filename or "voice.webm")
+    if not allowed_upload_extension(name):
+        raise HTTPException(status_code=400, detail="unsupported_extension")
+    rel_dir = "uploads/avatar_voice"
+    (ASSETS_DIR / rel_dir).mkdir(parents=True, exist_ok=True)
+    uid = _get_or_set_uid(request)
+    base, dot, ext = name.partition(".")
+    final_name = f"{uid}_{int(time.time())}.{ext or 'webm'}"
+    dest = ASSETS_DIR / rel_dir / final_name
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = await file.read(512 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"write_failed: {exc}")
+    rel_path = f"/assets/{rel_dir}/{final_name}"
+    state = await save_avatar_async(DATA_DIR, uid, {"voice_sample_url": rel_path.lstrip("/")})
+    return {"ok": True, "voice": {"url": rel_path}, "avatar": state.dict()}
+
+
+# ---------- PubWorld Interactables ----------
+@app.get("/api/pubworld/interactables")
+def api_pubworld_interactables(request: Request):
+    allow_adult = os.getenv("PUBWORLD_ALLOW_ADULT_CONTENT", "").strip().lower() in ("1", "true", "yes")
+    if request.headers.get("x-allow-adult", "").strip().lower() in ("1", "true", "yes"):
+        allow_adult = True
+    items = [i.dict() for i in list_interactables(DATA_DIR, allow_adult=allow_adult)]
+    return {"items": items}
+
+
+@app.get("/api/pubworld/scenes/{scene_id}/interactables")
+def api_scene_interactables(scene_id: str, request: Request):
+    # Resolve placed interactables with item metadata and adult gating
+    allow_adult = os.getenv("PUBWORLD_ALLOW_ADULT_CONTENT", "").strip().lower() in ("1", "true", "yes")
+    if request.headers.get("x-allow-adult", "").strip().lower() in ("1", "true", "yes"):
+        allow_adult = True
+    from modules.pubworld import get_scene  # local import to avoid cycles
+    scene = get_scene(DATA_DIR, scene_id)
+    items = {row["item_id"]: row for row in (i.dict() for i in list_interactables(DATA_DIR, allow_adult=allow_adult))}
+    resolved = []
+    # Snapshot of current tracks for optional binding
+    try:
+        _tracks = {t.track_id: t for t in tracking_service.list_tracks()}
+    except Exception:
+        _tracks = {}
+    # Snapshot of templates for attach points
+    try:
+        _templates = {t.template_id: t for t in tracking_service.list_templates()}
+    except Exception:
+        _templates = {}
+    # Scene mapping scale
+    scale_px_per_m = getattr(scene, "scale_px_per_m", 100.0) or 100.0
+    for placement in (scene.placements or []):
+        meta = items.get(placement.item_id)
+        if not meta:
+            continue
+        # Derive x from bound track if requested
+        bind_x = None
+        if getattr(placement, "bind_track_id", None):
+            t = _tracks.get(placement.bind_track_id)
+            if t and t.last_pose and isinstance(t.last_pose.position, list) and len(t.last_pose.position) >= 1:
+                try:
+                    # Optional attach point offset in meters (x component)
+                    attach_dx = 0.0
+                    if getattr(placement, "bind_attach", None) and t.template_id and t.template_id in _templates:
+                        ap = (_templates[t.template_id].attach_points or {}).get(placement.bind_attach)
+                        if isinstance(ap, (list, tuple)) and len(ap) >= 1:
+                            attach_dx = float(ap[0] or 0.0)
+                    raw_x_m = float(t.last_pose.position[0]) + attach_dx
+                    bind_x = int(round(raw_x_m * float(scale_px_per_m)))
+                except Exception:
+                    bind_x = None
+        row = {
+            "placement_id": placement.placement_id,
+            "item_id": placement.item_id,
+            "x": bind_x if bind_x is not None else placement.x,
+            "lane": placement.lane,
+            "rotation": placement.rotation,
+            "label": placement.label or meta.get("label"),
+            "actions": meta.get("actions", []),
+            "asset": meta.get("asset"),
+            "tags": meta.get("tags", []),
+            # Echo binding so clients can optionally handle updates client-side
+            "bind_track_id": getattr(placement, "bind_track_id", None),
+            "bind_attach": getattr(placement, "bind_attach", None),
+        }
+        resolved.append(row)
+    resolved.sort(key=lambda r: (r.get("lane", 1), r.get("x", 0)))
+    return {"items": resolved}
+
+
+@app.post("/api/pubworld/placement/bind")
+def api_pubworld_bind_placement(payload: Dict[str, Any], request: Request):
+    # Runtime admin guard to avoid import-time dependency order issues
+    try:
+        require_admin(request)
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    """Bind or unbind an interactable placement to a live track.
+
+    Body: { scene_id, placement_id, bind_track_id?, bind_attach? }
+    If bind_track_id is empty/null, binding is removed.
+    """
+    scene_id = str(payload.get("scene_id") or "").strip()
+    placement_id = str(payload.get("placement_id") or "").strip()
+    if not scene_id or not placement_id:
+        raise HTTPException(status_code=400, detail="scene_id and placement_id required")
+    try:
+        scene = get_scene(DATA_DIR, scene_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="scene_not_found")
+    found = None
+    for p in (scene.placements or []):
+        if p.placement_id == placement_id:
+            # Update binding
+            bind_track_id = payload.get("bind_track_id")
+            bind_attach = payload.get("bind_attach")
+            p.bind_track_id = str(bind_track_id) if bind_track_id else None
+            p.bind_attach = str(bind_attach) if bind_attach else None
+            found = p
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="placement_not_found")
+    # Persist
+    save_scene(DATA_DIR, scene)
+    # Return resolved placement payload same as in scene interactables
+    meta_map = {row["item_id"]: row for row in (i.dict() for i in list_interactables(DATA_DIR))}
+    meta = meta_map.get(found.item_id, {})
+    row = {
+        "placement_id": found.placement_id,
+        "item_id": found.item_id,
+        "x": found.x,
+        "lane": found.lane,
+        "rotation": found.rotation,
+        "label": found.label or meta.get("label"),
+        "actions": meta.get("actions", []),
+        "asset": meta.get("asset"),
+        "tags": meta.get("tags", []),
+        "bind_track_id": found.bind_track_id,
+        "bind_attach": found.bind_attach,
+    }
+    return {"placement": row}
+
+ 
+
+
+# ---------- Models (BYOK) ----------
+@app.get("/api/models", response_model=ModelsResponse)
+def list_models(request: Request):
+    uid = _get_or_set_uid(request)
+    models = user_model_manager.list_models(uid)
+    return {"models": [m.dict() for m in models]}
+
+
+@app.post("/api/models", response_model=ModelResponse)
+def create_model(request: Request, body: ModelCreateRequest):
+    uid = _get_or_set_uid(request)
+    model = user_model_manager.create_model(
+        uid,
+        provider=body.provider,
+        kind=body.kind,
+        display_name=body.display_name,
+        settings=body.settings or {},
+        secrets=body.secrets or {},
+    )
+    # Optional verification skipped when verify=False in tests
+    return {"model": model.dict()}
+
+
+@app.delete("/api/models/{model_id}")
+def delete_model(request: Request, model_id: str):
+    uid = _get_or_set_uid(request)
+    user_model_manager.delete_model(uid, model_id)
+    return {"deleted": True}
+
+
+# ---------- Rooms + WebSocket ----------
+@app.post("/api/rooms")
+async def create_room_api(body: RoomCreateRequest):
+    # Generate a simple room id
+    room_id = f"rm_{uuid.uuid4().hex[:8]}"
+    room = await room_manager.create_room(
+        room_id=room_id,
+        room_name=body.room_name,
+        voice_out_enabled=body.voice_out_enabled,
+        avatar_id=body.avatar_id,
+    )
+    snap = room.snapshot().dict()
+    snap["room_id"] = room.room_id
+    snap["room_name"] = room.room_name
+    return {"room": snap}
+
+
+@app.get("/api/rooms")
+async def list_rooms_api():
+    rooms = await room_manager.list_rooms()
+    # Pydantic model -> dict
+    return {"rooms": [r.dict() for r in rooms]}
+
+
+# ---------- Choreography (steps + preview) ----------
+@app.get("/api/choreo/steps")
+def api_choreo_steps(scene_id: str):
+    steps = [s.dict() for s in choreo_list_steps(DATA_DIR, scene_id)]
+    return {"steps": steps, "scene_id": scene_id}
+
+
+@app.post("/api/choreo/step")
+def api_choreo_add_step(payload: Dict[str, Any]):
+    scene_id = str(payload.get("scene_id") or "").strip()
+    step = payload.get("step") or {}
+    if not scene_id:
+        raise HTTPException(status_code=400, detail="scene_id_required")
+    try:
+        model = choreo_add_step(DATA_DIR, scene_id, step)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "step": model.dict()}
+
+
+@app.delete("/api/choreo/step/{step_id}")
+def api_choreo_delete_step(step_id: str, scene_id: str):
+    ok = choreo_delete_step(DATA_DIR, scene_id, step_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="step_not_found")
+    return {"ok": True}
+
+
+@app.post("/api/choreo/preview/start")
+async def api_choreo_preview_start(payload: Dict[str, Any]):
+    room_id = str(payload.get("room_id") or "").strip()
+    steps = payload.get("steps") or []
+    fps = float(payload.get("fps") or 30.0)
+    if not room_id:
+        raise HTTPException(status_code=400, detail="room_id_required")
+    # Validate steps using ChoreoStep
+    clean_steps: List[Dict[str, Any]] = []
+    for raw in steps:
+        try:
+            _ = ChoreoStep(**raw)
+            clean_steps.append(raw)
+        except Exception:
+            continue
+    if not clean_steps:
+        # allow preview with a single no-op step for smoke tests
+        clean_steps = [{"animation_type": "pose_transition", "start_time": 0.0, "duration": 1.0, "target_skeleton": {}}]
+    try:
+        await choreo_controller.start(room=room_id, avatars=None, steps=clean_steps, tick_hz=fps)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"preview_failed: {exc}") from exc
+    return {"ok": True}
+
+
+@app.post("/api/choreo/preview/stop")
+async def api_choreo_preview_stop():
+    try:
+        await choreo_controller.stop()
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+# ---------- Retarget verification ----------
+@app.get("/api/retarget/canonical")
+def api_retarget_canonical():
+    path = ASSETS_DIR / "avatar" / "canonical_skeleton.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"version": "canon/v1", "units": "meters", "joints": []}
+
+
+@app.post("/api/retarget/verify")
+def api_retarget_verify(payload: Dict[str, Any]):
+    mapping = payload.get("mapping") or {}
+    canon_path = ASSETS_DIR / "avatar" / "canonical_skeleton.json"
+    try:
+        canonical = json.loads(canon_path.read_text(encoding="utf-8"))
+    except Exception:
+        canonical = {"version": "canon/v1", "units": "meters", "joints": []}
+    report = _verify_mapping(mapping, canonical)
+    return report
+
+
+@app.post("/api/rooms/{room_id}/agents")
+async def add_agents_api(room_id: str, body: AddAgentsRequest):
+    try:
+        attached = await orchestrator.add_agents(room_id, body.agent_ids or [])
+        room = await room_manager.require_room(room_id)
+        state = room.state_event().dict()
+        state["agents"] = sorted(list(room.agents))
+        return {"attached": attached, "room": state}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="room_not_found")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/agents")
-async def list_agents():
-    """conference.js lists agents/bots for the conference room."""
-    if bot_manager is None:
-        return {"agents": []}
-    return {"agents": [
-        {"agent_id": cfg.bot_id, "name": cfg.display_name,
-         "provider": cfg.provider, "active": True}
-        for cfg in bot_manager.list_configs()
-    ]}
-
-
-
-@app.post("/api/session/register")
-async def register_session_user(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    body = await _json_dict(request)
-    caller_id = _caller_or_body_identity(request=request, identity=identity, explicit_value=body.get('user_id'), field_name='user_id', allow_privileged_override=True)
-    user_id = _bounded_text(caller_id, max_len=120) or 'anon'
-    display_name = _bounded_text(body.get('display_name') or user_id, max_len=120) or user_id
-    session_id = _bounded_text(body.get('session_id') or f"session_{int(time.time())}", max_len=120)
-    project_id = _bounded_text(body.get('project_id') or 'default', max_len=120)
-    raw_host_user_id = _bounded_text(body.get('host_user_id'), max_len=120) or None
-    host_user_id = raw_host_user_id
-    if raw_host_user_id:
-        # Host assignment may not contradict the caller unless a privileged token is present.
-        host_user_id = bound_actor(request=request, identity=identity, explicit_value=raw_host_user_id, field_name='host_user_id')
-    participant = session_runtime.register_participant(
-        DATA_DIR,
-        session_id=session_id,
-        user_id=user_id,
-        display_name=display_name,
-        project_id=project_id,
-        session_role=_bounded_string_list(body.get('session_role'), field_name='session_role'),
-        project_role=_bounded_string_list(body.get('project_role'), field_name='project_role'),
-        license_role=_bounded_text(body.get('license_role') or 'personal', max_len=40),
-        host_user_id=host_user_id,
-        credit_name=_bounded_text(body.get('credit_name') or display_name, max_len=120),
-        presence_mode=_bounded_text(body.get('presence_mode') or 'avatar_static', max_len=40),
-        availability=_bounded_text(body.get('availability') or 'available', max_len=40),
-        creditable=bool(body.get('creditable', True)),
-    )
-    bridge_packet = alex_bridge.build_entry_packet(
-        user_id=user_id,
-        session_id=session_id,
-        project_id=project_id,
-        room_id=participant.get('dressing_room_id', 'dressing_room'),
-        display_name=display_name,
-        metadata=body,
-    ) if alex_bridge else None
-    return {'ok': True, 'participant': participant, 'alex_bridge': bridge_packet, 'jeremy_whisper': alex_bridge.jeremy_whisper(user_id=user_id, session_id=session_id) if alex_bridge else ''}
-
-
-@app.get("/api/session/{session_id}/roster")
-async def session_roster(session_id: str):
-    return {'ok': True, 'session_id': session_id, 'participants': session_runtime.get_roster(DATA_DIR, session_id)}
-
-
-@app.post("/api/session/{session_id}/role")
-async def update_session_role(session_id: str, request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    body = await _json_dict(request)
-    target_user_id = _bounded_text(body.get('target_user_id'), max_len=120)
-    if not target_user_id:
-        raise HTTPException(400, 'target_user_id is required')
-    session_role = _bounded_string_list(body.get('session_role'), field_name='session_role') if 'session_role' in body else None
-    project_role = _bounded_string_list(body.get('project_role'), field_name='project_role') if 'project_role' in body else None
+def list_agents_api():
+    items = []
     try:
-        participant = session_runtime.update_role(
-            DATA_DIR,
-            session_id=_bounded_text(session_id, max_len=120),
-            acting_user_id=_bounded_text(bound_actor(request=request, identity=identity, explicit_value=body.get('acting_user_id') or request.headers.get('X-Client-Id', 'anon'), field_name='acting_user_id'), max_len=120),
-            target_user_id=target_user_id,
-            session_role=session_role,
-            project_role=project_role,
-            creditable=body.get('creditable'),
-        )
-    except KeyError as exc:
-        raise HTTPException(404, str(exc))
-    bridge_packet = alex_bridge.current_packet(user_id=participant.get('user_id'), session_id=session_id) if alex_bridge else None
-    return {'ok': True, 'participant': participant, 'alex_bridge': bridge_packet, 'jeremy_whisper': alex_bridge.jeremy_whisper(user_id=participant.get('user_id'), session_id=session_id) if alex_bridge else ''}
+        for cfg in agent_registry.available_agents():
+            items.append(
+                {
+                    "agent_id": cfg.agent_id,
+                    "display_name": cfg.display_name,
+                    "provider": cfg.provider,
+                    "model": cfg.model,
+                    "priority": cfg.priority,
+                    "cooldown_ms": cfg.cooldown_ms,
+                }
+            )
+    except Exception:
+        pass
+    return {"agents": items}
 
 
-@app.get("/api/session/{session_id}/call-menu")
-async def session_call_menu(session_id: str):
-    return {'ok': True, 'session_id': session_id, 'contacts': session_runtime.call_menu(DATA_DIR, session_id)}
+# ---------- Tracking (templates + tracks + sim) ----------
+# Local watcher registry for per-track WS listeners
+TRACKER_WATCHERS: Dict[str, set] = {}
 
+# Pose streaming/recording (canonical skeleton frames)
+POSE_RECORDERS: Dict[str, Dict[str, Any]] = {}
 
-@app.post("/api/dressing-room/resolve")
-async def resolve_dressing_room(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    body = await _json_dict(request)
-    caller_id = _caller_or_body_identity(request=request, identity=identity, explicit_value=body.get('user_id') or request.headers.get('X-Client-Id'), field_name='user_id', allow_privileged_override=True)
-    user_id = _bounded_text(caller_id, max_len=120) or 'anon'
-    display_name = _bounded_text(body.get('display_name') or user_id, max_len=120) or user_id
-    session_id = _bounded_text(body.get('session_id') or 'default', max_len=120)
-    project_id = _bounded_text(body.get('project_id') or 'default', max_len=120)
-    resolved = session_runtime.resolve_dressing_room(DATA_DIR, session_id=session_id, user_id=user_id, display_name=display_name, project_id=project_id)
-    bridge_packet = alex_bridge.build_entry_packet(
-        user_id=user_id,
-        session_id=session_id,
-        project_id=project_id,
-        room_id=resolved.get('dressing_room_id', 'dressing_room'),
-        display_name=display_name,
-        metadata=body,
-    ) if alex_bridge else None
-    return {'ok': True, **resolved, 'alex_bridge': bridge_packet, 'jeremy_whisper': alex_bridge.jeremy_whisper(user_id=user_id, session_id=session_id) if alex_bridge else ''}
+def _now_ms() -> float:
+    return time.time() * 1000.0
 
-@app.get("/api/dressing-room/security/status")
-async def dressing_room_security_status(request: Request, project_id: str = 'default', session_id: str = 'default'):
-    room_owner_id = request.headers.get('X-Client-Id', 'anon')
-    status = dr_security.get_status(DATA_DIR, room_owner_id=room_owner_id, session_id=session_id)
-    status.update({'ok': True, 'project_id': project_id, 'session_id': session_id, 'room_owner_id': room_owner_id})
-    return status
-
-@app.post("/api/dressing-room/security/code")
-async def dressing_room_security_code(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    body = await _json_dict(request)
-    room_owner_id = _bounded_text(_caller_or_body_identity(request=request, identity=identity, explicit_value=body.get('room_owner_id') or request.headers.get('X-Client-Id'), field_name='room_owner_id'), max_len=120) or 'anon'
-    action = _bounded_text(body.get('action') or 'set', max_len=20).lower() or 'set'
-    if action not in {'set', 'disable'}:
-        raise HTTPException(status_code=400, detail='action must be set or disable')
+async def _broadcast_pose(room: str, pose: Dict[str, Any]) -> None:
     try:
-        if action == 'disable':
-            result = dr_security.disable_code(DATA_DIR, room_owner_id, _bounded_text(body.get('current_code') or body.get('code') or '', max_len=32))
-        else:
-            result = dr_security.set_code(DATA_DIR, room_owner_id, _bounded_text(body.get('code') or '', max_len=32))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
-    return {'ok': True, **result, 'room_owner_id': room_owner_id}
+        # Prefer room-specific broadcast
+        await hub._broadcast(room, {"type": "pose.frame", "payload": {"pose": pose, "ts": _now_ms(), "room": room}})
+    except Exception:
+        # Fallback to system-broadcast
+        try:
+            await hub.broadcast_system_event({"type": "pose.frame", "payload": {"pose": pose, "ts": _now_ms(), "room": room}})
+        except Exception:
+            pass
 
-@app.post("/api/dressing-room/security/enter")
-async def dressing_room_security_enter(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    body = await _json_dict(request)
-    room_owner_id = _bounded_text(body.get('room_owner_id') or request.headers.get('X-Client-Id', 'anon'), max_len=120) or 'anon'
-    acting_identity = _bounded_text(_caller_or_body_identity(request=request, identity=identity, explicit_value=body.get('acting_identity') or request.headers.get('X-Client-Id'), field_name='acting_identity', allow_privileged_override=True), max_len=120) or 'anon'
-    return dr_security.attempt_entry(
-        DATA_DIR,
-        room_owner_id=room_owner_id,
-        acting_identity=acting_identity,
-        project_id=_bounded_text(body.get('project_id') or 'default', max_len=120),
-        session_id=_bounded_text(body.get('session_id') or 'default', max_len=120),
-        credential_type=_bounded_text(body.get('credential_type') or 'personal', max_len=40),
-        code=_bounded_text(body.get('code'), max_len=32) or None,
-        valid_routing=bool(body.get('valid_routing', True)),
-        access_log=_string_list_field(body.get('accessed_files') or body.get('access_log') or [], 'access_log'),
-    )
+def _record_pose_if_active(room: str, pose: Dict[str, Any]) -> None:
+    rec = POSE_RECORDERS.get(room)
+    if not rec:
+        return
+    frames = rec.setdefault("frames", [])
+    frames.append({"t": _now_ms(), "pose": pose})
 
 
-@app.post("/api/memory/events")
-async def record_memory_event(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    body = await _json_dict(request)
-    event = memory_engine.record_event(
-        DATA_DIR,
-        session_id=_bounded_text(body.get('session_id') or 'default', max_len=120),
-        project_id=_bounded_text(body.get('project_id') or 'default', max_len=120),
-        user_id=_bounded_text(_caller_or_body_identity(request=request, identity=identity, explicit_value=body.get('user_id') or request.headers.get('X-Client-Id'), field_name='user_id', allow_privileged_override=True), max_len=120) or 'anon',
-        room_id=_bounded_text(body.get('room_id') or 'unknown', max_len=120),
-        feature_id=_bounded_text(body.get('feature_id') or '', max_len=120),
-        event_type=_bounded_text(body.get('event_type') or 'interaction', max_len=80),
-        summary=_bounded_text(body.get('summary') or '', max_len=1000),
-        speaking_style=_bounded_text(body.get('speaking_style') or '', max_len=120),
-        mood_trace=_bounded_text(body.get('mood_trace') or '', max_len=240),
-        payload=_object_or_empty(body.get('payload'), field_name='payload'),
-    )
-    return {'ok': True, 'event': event}
+def _lost_bind_policy() -> str:
+    return os.getenv("PUBWORLD_LOST_BIND_POLICY", "freeze").strip().lower()
 
 
-@app.get("/api/memory/context")
-async def get_memory_context(session_id: str, project_id: str, user_id: str, room_id: str):
-    context = memory_engine.context_summary(DATA_DIR, session_id=session_id, project_id=project_id, user_id=user_id, room_id=room_id)
-    if alex_bridge:
-        context['alex_bridge'] = alex_bridge.current_packet(user_id=user_id, session_id=session_id)
-        context['jeremy_whisper'] = alex_bridge.jeremy_whisper(user_id=user_id, session_id=session_id)
-    return {'ok': True, 'context': context}
+def _unbind_track_bindings(track_id: str) -> int:
+    """Remove bind_track_id references from all scenes for a given track.
+
+    Returns count of updated placements.
+    """
+    updated = 0
+    try:
+        scenes = list_scenes(DATA_DIR)
+    except Exception:
+        return 0
+    for scn in scenes:
+        changed = False
+        for p in (scn.placements or []):
+            if getattr(p, "bind_track_id", None) == track_id:
+                p.bind_track_id = None
+                p.bind_attach = None
+                changed = True
+                updated += 1
+        if changed:
+            try:
+                save_scene(DATA_DIR, scn)
+            except Exception:
+                pass
+    return updated
+@app.get("/api/tracking/templates")
+def api_tracking_templates():
+    templates = [t.dict() for t in tracking_service.list_templates()]
+    return {"templates": templates}
 
 
-@app.post("/api/alex-jeremy/signal")
-async def alex_jeremy_signal(request: Request, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    body = await _json_dict(request)
-    if not alex_bridge:
-        raise HTTPException(503, 'Alex/Jeremy bridge not initialized')
-    user_id = _bounded_text(_caller_or_body_identity(request=request, identity=identity, explicit_value=body.get('user_id') or request.headers.get('X-Client-Id'), field_name='user_id', allow_privileged_override=True), max_len=120) or 'anon'
-    packet = alex_bridge.signal_from_jeremy(
-        user_id=user_id,
-        session_id=_bounded_text(body.get('session_id') or 'default', max_len=120),
-        room_state=_bounded_text(body.get('room_state') or 'stable', max_len=40),
-        urgency=_bounded_text(body.get('urgency') or 'low', max_len=40),
-        reason=_bounded_text(body.get('reason') or 'unspecified', max_len=240),
-        payload=_object_or_empty(body.get('payload'), field_name='payload'),
-    )
-    return {'ok': True, 'alex_bridge': packet, 'jeremy_whisper': alex_bridge.jeremy_whisper(user_id=user_id, session_id=body.get('session_id') or 'default')}
+@app.post("/api/tracking/templates")
+def api_tracking_upsert_template(payload: Dict[str, Any]):
+    try:
+        model = tracking_service.upsert_template(payload or {})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "template": model.dict()}
 
 
-@app.get("/api/alex-jeremy/packet")
-async def alex_jeremy_packet(session_id: str, user_id: str):
-    if not alex_bridge:
-        raise HTTPException(503, 'Alex/Jeremy bridge not initialized')
-    return {'ok': True, 'alex_bridge': alex_bridge.current_packet(user_id=user_id, session_id=session_id), 'jeremy_whisper': alex_bridge.jeremy_whisper(user_id=user_id, session_id=session_id)}
+@app.get("/api/tracking/tracks")
+def api_tracking_tracks():
+    tracks = [t.dict() for t in tracking_service.list_tracks()]
+    return {"tracks": tracks}
 
 
-@app.get("/api/cast/characters")
-async def list_cast_characters_route():
-    return {"characters": [spec.model_dump() for spec in list_cast_characters()], "count": len(list_cast_characters())}
+@app.post("/api/tracking/assign")
+def api_tracking_assign(payload: Dict[str, Any]):
+    try:
+        model = tracking_service.assign(payload or {})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        # Broadcast a bound event across rooms
+        asyncio.create_task(hub.broadcast_system_event({"type": "tracking.bound", "payload": model.dict()}))
+    except Exception:
+        pass
+    return {"ok": True, "track": model.dict()}
 
 
-@app.get("/api/cast/characters/{character_id}")
-async def get_cast_character_route(character_id: str):
-    spec = get_cast_character(character_id)
-    if not spec:
-        raise HTTPException(404, f"Cast character '{character_id}' not found")
-    return spec.model_dump()
+@app.post("/api/tracking/unassign")
+def api_tracking_unassign(payload: Dict[str, Any]):
+    track_id = str(payload.get("track_id") or "")
+    if not track_id:
+        raise HTTPException(status_code=400, detail="track_id_required")
+    ok = tracking_service.unassign(track_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="track_not_found")
+    return {"ok": True}
 
 
-@app.get("/api/avatars/me")
-async def get_my_avatar(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    """dressing.html / dressing.js — return the caller's persisted avatar profile."""
-    client_id = bound_actor(request=request, identity=identity, explicit_value=request.headers.get("X-Client-Id"), field_name="X-Client-Id", allow_privileged_override=False)
-    avatar = load_avatar(DATA_DIR, client_id)
-    response = {
-        "available": True,
-        "user_id": client_id,
-        "display_name": getattr(avatar, "display_name", client_id),
-        "glow_color": getattr(avatar, "glow_color", "#00FFFF"),
-        "badge": getattr(avatar, "metadata", {}).get("badge", ""),
-        "preset_id": getattr(avatar, "preset", "MANNY"),
-        "color": getattr(avatar, "glow_color", "#00FFFF"),
-        "mood": getattr(avatar, "metadata", {}).get("mood", "neutral"),
-        "gesture": getattr(avatar, "metadata", {}).get("gesture", "none"),
+@app.post("/api/tracking/sim/tick")
+async def api_tracking_sim_tick():
+    model = tracking_service.simulate_tick()
+    try:
+        await hub.broadcast_system_event({"type": "tracking.update", "payload": model.dict()})
+    except Exception:
+        pass
+    return {"ok": True, "track": model.dict()}
+
+
+@app.post("/api/tracking/observe")
+async def api_tracking_observe(payload: Dict[str, Any]):
+    try:
+        result = tracking_service.observe(payload or {})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Broadcast updates
+    try:
+        async def _notify(event_type: str, model: Any) -> None:
+            payload = model.dict() if hasattr(model, 'dict') else model
+            await hub.broadcast_system_event({"type": event_type, "payload": payload})
+            # Per-track watchers
+            tid = payload.get("track_id") if isinstance(payload, dict) else getattr(payload, "track_id", None)
+            if tid and tid in TRACKER_WATCHERS:
+                for ws in list(TRACKER_WATCHERS.get(tid, set())):
+                    try:
+                        if ws.application_state == WebSocketState.CONNECTED:
+                            await ws.send_text(json.dumps({"type": event_type, "payload": payload}))
+                        else:
+                            TRACKER_WATCHERS.get(tid, set()).discard(ws)
+                    except Exception:
+                        TRACKER_WATCHERS.get(tid, set()).discard(ws)
+        for t in result.get("updates", []):
+            await _notify("tracking.update", t)
+        for t in result.get("bound", []):
+            await _notify("tracking.bound", t)
+        for t in result.get("lost", []):
+            await _notify("tracking.lost", t)
+            # Optional auto-unbind policy
+            try:
+                if _lost_bind_policy() == "unbind":
+                    tid = t.track_id if hasattr(t, 'track_id') else (t.get('track_id') if isinstance(t, dict) else None)
+                    if tid:
+                        _unbind_track_bindings(str(tid))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # Normalize to JSON-safe
+    def norm(arr):
+        out = []
+        for x in arr:
+            out.append(x.dict() if hasattr(x, 'dict') else x)
+        return out
+    return {
+        "ok": True,
+        "updates": norm(result.get("updates", [])),
+        "bound": norm(result.get("bound", [])),
+        "created": norm(result.get("created", [])),
+        "lost": norm(result.get("lost", [])),
     }
-    if ethereal_mgr is not None:
-        try:
-            skin = ethereal_mgr.get_or_create_skin(client_id)
-            response["mood"] = getattr(skin, "mood", response["mood"])
-            response["gesture"] = getattr(skin, "current_gesture", response["gesture"])
-        except Exception:
-            pass
-    return response
 
 
-@app.post("/api/avatars/me")
-async def update_my_avatar(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    """dressing.js — update caller's avatar skin and persisted profile."""
-    client_id = bound_actor(request=request, identity=identity, explicit_value=request.headers.get("X-Client-Id"), field_name="X-Client-Id", allow_privileged_override=False)
-    body = await _json_dict(request)
-    existing = load_avatar(DATA_DIR, client_id)
-    merged = existing.model_dump()
-    if "display_name" in body:
-        merged["display_name"] = body.get("display_name") or existing.display_name
-    if "glow_color" in body or "color" in body:
-        merged["glow_color"] = body.get("glow_color") or body.get("color") or existing.glow_color
-    if "preset_id" in body:
-        merged["preset"] = body.get("preset_id") or existing.preset
-    metadata = dict(getattr(existing, "metadata", {}) or {})
-    if "badge" in body:
-        metadata["badge"] = body.get("badge") or ""
-    if "mood" in body:
-        metadata["mood"] = body.get("mood")
-    if "gesture" in body:
-        metadata["gesture"] = body.get("gesture")
-    merged["metadata"] = metadata
-    avatar = save_avatar(DATA_DIR, client_id, existing.__class__(**merged))
-    if ethereal_mgr is not None:
-        try:
-            if "color" in body or "glow_color" in body:
-                ethereal_mgr.set_color(client_id, merged["glow_color"])
-            if "mood" in body:
-                ethereal_mgr.set_mood(client_id, body["mood"])
-        except Exception:
-            pass
-    return {"ok": True, "user_id": client_id, "display_name": avatar.display_name, "glow_color": avatar.glow_color, "preset_id": avatar.preset, "badge": metadata.get("badge", "")}
+def _detector_key() -> str:
+    return os.getenv("PUBCAST_DETECTOR_KEY", "").strip()
 
 
-@app.get("/api/avatars/presets")
-async def list_avatar_presets_route():
-    """dressing.html — list available avatar presets."""
-    return {"presets": [p.model_dump() for p in list_avatar_presets()]}
+_INGEST_LIMITERS: Dict[str, _SimpleRateLimiter] = {}
 
 
-@app.post("/api/avatars/me/bake")
-async def bake_my_avatar(request: Request, identity: Dict[str, Any] = Depends(current_identity)):
-    """dressing.js — bake a photo into a voxel avatar portrait."""
-    client_id = bound_actor(request=request, identity=identity, explicit_value=request.headers.get("X-Client-Id"), field_name="X-Client-Id", allow_privileged_override=False)
-    if not _HAS_SCULPTOR or Sculptor is None:
-        return {"ok": False, "reason": "Sculptor not available — upload a photo when it is"}
-    # Multipart photo upload
+def _ingest_limiter_for(key: str) -> _SimpleRateLimiter:
+    lim = _INGEST_LIMITERS.get(key)
+    if lim is None:
+        lim = _SimpleRateLimiter(capacity=120, window_seconds=60)
+        _INGEST_LIMITERS[key] = lim
+    return lim
+
+
+@app.post("/api/tracking/ingest/detections")
+async def api_tracking_ingest_detections(request: Request, payload: Dict[str, Any]):
+    """Accept external fiducial detections and forward to the matcher.
+
+    Payload shape (flexible):
+      { "detections": [ { "id": "42", "position": [x,y,z], "rotation": [qx,qy,qz,qw] }, ... ] }
+    """
+    # Optional auth
+    key = _detector_key()
+    if key:
+        supplied = request.headers.get("x-detector-key") or request.headers.get("X-Detector-Key")
+        if supplied != key:
+            raise HTTPException(status_code=403, detail="detector_key_required")
+        # Rate limit per key
+        limiter = _ingest_limiter_for(supplied)
+        if not limiter.allow("ingest:" + supplied):
+            raise HTTPException(status_code=429, detail="rate_limited")
     try:
-        import shutil
-        form = await request.form()
-        photo = form.get("photo") or form.get("file")
-        if not photo or not hasattr(photo, "filename"):
-            raise HTTPException(400, "photo file required")
-        dest = DATA_DIR / "sculptures" / f"{client_id}_photo{__import__('pathlib').Path(photo.filename).suffix}"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        with dest.open("wb") as f:
-            shutil.copyfileobj(photo.file, f)
-        sculptor = Sculptor(mode="webcam")
-        result = sculptor.bake_from_photo(dest, client_id)
-        if result is None:
-            return {"ok": False, "reason": "No face detected in photo"}
-        return {"ok": True, "bake": result}
+        detections = payload.get("detections") or []
+        markers: Dict[str, List[float]] = {}
+        for d in detections:
+            try:
+                mid = str(d.get("id") if isinstance(d, dict) else None)
+                if not mid:
+                    continue
+                pos = d.get("position") or d.get("pos") or d.get("tvec")
+                if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+                    continue
+                markers[mid] = [float(pos[0]), float(pos[1]), float(pos[2])]
+            except Exception:
+                continue
+        result = tracking_service.observe({"markers": markers})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        async def _notify(event_type: str, model: Any) -> None:
+            payload = model.dict() if hasattr(model, 'dict') else model
+            await hub.broadcast_system_event({"type": event_type, "payload": payload})
+            tid = payload.get("track_id") if isinstance(payload, dict) else getattr(payload, "track_id", None)
+            if tid and tid in TRACKER_WATCHERS:
+                for ws in list(TRACKER_WATCHERS.get(tid, set())):
+                    try:
+                        if ws.application_state == WebSocketState.CONNECTED:
+                            await ws.send_text(json.dumps({"type": event_type, "payload": payload}))
+                        else:
+                            TRACKER_WATCHERS.get(tid, set()).discard(ws)
+                    except Exception:
+                        TRACKER_WATCHERS.get(tid, set()).discard(ws)
+        for t in result.get("updates", []):
+            await _notify("tracking.update", t)
+        for t in result.get("bound", []):
+            await _notify("tracking.bound", t)
+        for t in result.get("lost", []):
+            await _notify("tracking.lost", t)
+            try:
+                if _lost_bind_policy() == "unbind":
+                    tid = t.track_id if hasattr(t, 'track_id') else (t.get('track_id') if isinstance(t, dict) else None)
+                    if tid:
+                        _unbind_track_bindings(str(tid))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    def norm(arr):
+        out = []
+        for x in arr:
+            out.append(x.dict() if hasattr(x, 'dict') else x)
+        return out
+    return {
+        "ok": True,
+        "updates": norm(result.get("updates", [])),
+        "bound": norm(result.get("bound", [])),
+        "created": norm(result.get("created", [])),
+        "lost": norm(result.get("lost", [])),
+    }
+
+@app.websocket("/ws/{room_id}")
+async def ws_endpoint(websocket: WebSocket, room_id: str):
+    # Extract or mint uid from cookies (ASGI scope headers)
+    headers = dict(websocket.headers or {})
+    cookies = headers.get("cookie") or headers.get("Cookie") or ""
+    uid = None
+    if cookies:
+        for part in cookies.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "pubcast_uid":
+                uid = v
+                break
+    if not uid:
+        uid = str(uuid.uuid4())
+
+    await hub.connect(websocket, room_id, uid)
+    is_agent_room = room_id.startswith("rm_")
+    participant_id = f"user:{uid}"
+    if is_agent_room:
+        try:
+            # Ensure orchestrator room exists and join
+            try:
+                await room_manager.require_room(room_id)
+            except Exception:
+                await room_manager.create_room(room_id, room_id)
+            await orchestrator.join_room(room_id, participant_id, uid, websocket)
+        except Exception:
+            # Non-fatal: continue with hub-only behavior
+            pass
+    try:
+        while True:
+            msg = await websocket.receive_text()
+            await hub.handle_message(websocket, msg)
+            if is_agent_room:
+                try:
+                    payload = json.loads(msg)
+                    kind = payload.get("type")
+                    text = None
+                    if kind == "chat":
+                        text = (payload.get("payload") or {}).get("text")
+                    elif kind == "say":
+                        text = (payload.get("text") or "").strip()
+                    if text:
+                        await orchestrator.handle_human_message(room_id, participant_id, text)
+                except Exception:
+                    pass
+    except WebSocketDisconnect:
+        await hub.disconnect(websocket)
+        if is_agent_room:
+            try:
+                await orchestrator.leave_room(room_id, participant_id)
+            except Exception:
+                pass
+
+
+# Per-track watcher for viewer.js compatibility
+@app.websocket("/ws/tracker/{track_id}")
+async def ws_tracker_single(websocket: WebSocket, track_id: str):
+    await websocket.accept()
+    watchers = TRACKER_WATCHERS.setdefault(track_id, set())
+    watchers.add(websocket)
+    try:
+        while True:
+            try:
+                # Keepalive or ignore messages
+                _ = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                # ignore parse errors
+                pass
+    finally:
+        try:
+            TRACKER_WATCHERS.get(track_id, set()).discard(websocket)
+        except Exception:
+            pass
+# Streaming detector ingest over WebSocket (flexible schema)
+@app.websocket("/ws/tracking/ingest")
+async def ws_tracking_ingest(websocket: WebSocket):
+    await websocket.accept()
+    # Optional auth via header or first message {"auth":"key"}
+    detector_key = _detector_key()
+    supplied = websocket.headers.get("x-detector-key") or websocket.headers.get("X-Detector-Key")
+    authed = False if detector_key else True
+    if detector_key:
+        if supplied == detector_key:
+            authed = True
+    try:
+        while True:
+            try:
+                msg = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            try:
+                obj = json.loads(msg)
+            except Exception:
+                try:
+                    obj = json.loads((msg or "").strip())
+                except Exception:
+                    await websocket.send_text(json.dumps({"ok": False, "error": "invalid_json"}))
+                    continue
+            # First message could be auth
+            if detector_key and not authed and isinstance(obj, dict) and obj.get("auth"):
+                if str(obj.get("auth")).strip() == detector_key:
+                    authed = True
+                    await websocket.send_text(json.dumps({"ok": True, "auth": "ok"}))
+                else:
+                    await websocket.send_text(json.dumps({"ok": False, "error": "auth_failed"}))
+                continue
+            if detector_key and not authed:
+                await websocket.send_text(json.dumps({"ok": False, "error": "auth_required"}))
+                continue
+
+            detections = obj.get("detections") or []
+            markers: Dict[str, List[float]] = {}
+            for d in detections:
+                try:
+                    mid = str(d.get("id") if isinstance(d, dict) else None)
+                    if not mid:
+                        continue
+                    pos = d.get("position") or d.get("pos") or d.get("tvec")
+                    if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+                        continue
+                    markers[mid] = [float(pos[0]), float(pos[1]), float(pos[2])]
+                except Exception:
+                    continue
+
+            if not markers:
+                await websocket.send_text(json.dumps({"ok": True, "updates": 0}))
+                continue
+            # Rate limit per detector key if configured
+            if detector_key:
+                key = supplied or "ws"
+                limiter = _ingest_limiter_for(key)
+                if not limiter.allow("ingest:" + key):
+                    await websocket.send_text(json.dumps({"ok": False, "error": "rate_limited"}))
+                    continue
+            result = tracking_service.observe({"markers": markers})
+            try:
+                for t in result.get("updates", []):
+                    await hub.broadcast_system_event({"type": "tracking.update", "payload": (t.dict() if hasattr(t, 'dict') else t)})
+                for t in result.get("bound", []):
+                    await hub.broadcast_system_event({"type": "tracking.bound", "payload": (t.dict() if hasattr(t, 'dict') else t)})
+                for t in result.get("lost", []):
+                    await hub.broadcast_system_event({"type": "tracking.lost", "payload": (t.dict() if hasattr(t, 'dict') else t)})
+            except Exception:
+                pass
+
+            await websocket.send_text(json.dumps({
+                "ok": True,
+                "counts": {
+                    "updates": len(result.get("updates", [])),
+                    "bound": len(result.get("bound", [])),
+                    "created": len(result.get("created", [])),
+                    "lost": len(result.get("lost", [])),
+                }
+            }))
+    except Exception:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ---------- Canonical Pose ingest + record ----------
+
+@app.post("/api/pose/frame")
+async def api_pose_frame(payload: Dict[str, Any]):
+    room = str(payload.get("room_id") or "green")
+    pose = payload.get("pose") or {}
+    if not isinstance(pose, dict):
+        raise HTTPException(status_code=400, detail="invalid_pose")
+    _record_pose_if_active(room, pose)
+    await _broadcast_pose(room, pose)
+    return {"ok": True}
+
+
+@app.post("/api/pose/record/start")
+def api_pose_record_start(payload: Dict[str, Any]):
+    room = str(payload.get("room_id") or "green")
+    scene_id = str(payload.get("scene_id") or "")
+    if not scene_id:
+        raise HTTPException(status_code=400, detail="scene_id_required")
+    POSE_RECORDERS[room] = {"scene_id": scene_id, "frames": [], "t0": _now_ms()}
+    return {"ok": True}
+
+
+@app.post("/api/pose/record/stop")
+def api_pose_record_stop(payload: Dict[str, Any]):
+    room = str(payload.get("room_id") or "green")
+    rec = POSE_RECORDERS.pop(room, None)
+    if not rec:
+        raise HTTPException(status_code=404, detail="no_active_recording")
+    scene_id = rec.get("scene_id") or ""
+    frames = rec.get("frames") or []
+    if not scene_id or not frames:
+        return {"ok": True, "steps": []}
+    # Downsample to ~2 Hz for coarse pose transitions
+    sample_ms = int(payload.get("sample_ms") or 500)
+    t0 = rec.get("t0") or frames[0]["t"]
+    steps: List[Dict[str, Any]] = []
+    last_emit = -1e9
+    for f in frames:
+        t = float(f.get("t") or 0) - t0
+        if (t - last_emit) >= sample_ms:
+            pose = f.get("pose") or {}
+            joints = (pose.get("joints") or {}) if isinstance(pose, dict) else {}
+            # Build target_skeleton: joint -> quaternion list
+            target = {}
+            for j, data in joints.items():
+                try:
+                    rot = list((data or {}).get("rotation") or [])
+                    if len(rot) >= 4:
+                        target[str(j)] = rot[:4]
+                except Exception:
+                    continue
+            step = {
+                "animation_type": "pose_transition",
+                "start_time": max(0.0, t / 1000.0),
+                "duration": float(sample_ms) / 1000.0,
+                "ease": "linear",
+                "target_skeleton": target,
+                "pins": {},
+            }
+            try:
+                model = choreo_add_step(DATA_DIR, scene_id, step)
+                steps.append(model.dict())
+            except Exception:
+                # continue on error
+                pass
+            last_emit = t
+    return {"ok": True, "steps": steps}
+# ---------- Production State ----------
+@app.get("/api/state/production")
+async def get_production_state():
+    return await hub.get_production_state()
+
+
+@app.post("/api/state/production")
+async def update_production_state(patch: Dict[str, Any]):
+    try:
+        return await hub.update_production_state(patch)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+ 
+
+
+# ---------- Uploads ----------
+@app.post("/api/upload")
+async def upload(file: UploadFile = File(...), target: str = Form("")):
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided.")
+    if not allowed_upload_extension(file.filename):
+        raise HTTPException(status_code=400, detail="Unsupported file type.")
+    filename = sanitize_filename(file.filename)
+    rel_dir = "uploads"
+    out_dir = ASSETS_DIR / rel_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / filename
+    # Stream to disk with a server-side cap
+    try:
+        max_mb = int(os.getenv("PUBCAST_MAX_UPLOAD_MB", "5").strip())
+    except Exception:
+        max_mb = 5
+    max_bytes = max(1, max_mb) * 1024 * 1024
+    size = 0
+    try:
+        with out_path.open("wb") as handle:
+            chunk_size = 1024 * 1024
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    try:
+                        handle.close()
+                        out_path.unlink(missing_ok=True)
+                    finally:
+                        pass
+                    raise HTTPException(status_code=413, detail="file_too_large")
+                handle.write(chunk)
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(500, str(exc))
+        # Clean up on error
+        out_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"upload_failed: {exc}")
+    rel_path = f"/assets/{rel_dir}/{filename}"
+    return {"path": rel_path}
 
 
-@app.get("/api/vod")
-async def list_vod():
-    """gallery.html — list completed recordings available for playback."""
-    if recording is None:
-        return {"sessions": []}
+# ---------- Inference ----------
+@app.post("/api/inference/llm")
+async def inference_llm(body: Dict[str, Any]):
+    prompt = str(body.get("prompt", "").strip())
+    if inference_manager is not None:
+        try:
+            result = await inference_manager.generate_text(prompt)
+            return {"ok": True, "result": result}
+        except Exception as exc:  # noqa: BLE001
+            # Fallback to stub on error
+            text = f"[worker-error {type(exc).__name__}] {prompt}".strip()
+            return {"ok": True, "result": {"text": text, "engine": "stub"}}
+    text = f"[stub-llm temp=0.7 max_tokens=256] {prompt}".strip()
+    return {"ok": True, "result": {"text": text, "engine": "stub"}}
+
+
+@app.get("/api/inference/status")
+def inference_status():
+    if inference_manager is not None:
+        try:
+            return {"ok": True, "status": inference_manager.status()}
+        except Exception:
+            pass
+    return {"ok": True, "status": {"pending_jobs": 0, "worker_alive": False}}
+
+
+# ---------- Status / Recording Profiles / Credentials ----------
+@app.get("/status")
+def status():
+    ffmpeg_path = os.getenv("PUBCAST_FFMPEG") or shutil.which("ffmpeg")
+    ffprobe_path = os.getenv("PUBCAST_FFPROBE") or shutil.which("ffprobe")
+    sec_dir = DATA_DIR / "secure" / "creds"
     try:
-        sessions = recording.list_sessions() if hasattr(recording, "list_sessions") else []
-        # Only return sessions with artifacts (actual recorded files)
-        completed = [s for s in sessions
-                     if isinstance(s, dict) and s.get("artifacts")]
-        return {"sessions": completed, "count": len(completed)}
+        keys_ok = any(sec_dir.glob("*.json"))
     except Exception:
-        return {"sessions": [], "count": 0}
+        keys_ok = False
+    return {"ffmpeg_ok": bool(ffmpeg_path), "ffprobe_ok": bool(ffprobe_path), "keys_ok": keys_ok}
 
 
-@app.get("/api/performer/status")
-async def performer_status():
-    """launch.html — overall performer/avatar pipeline health check."""
+@app.get("/api/recordings/profiles")
+def get_recording_profiles():
+    profiles = []
+    for p in recording_service.list_profiles():
+        profiles.append(
+            {
+                "profile_id": p.profile_id,
+                "name": p.name,
+                "container": p.container.value,
+                "video_codec": p.video_codec,
+                "audio_codec": p.audio_codec,
+                "video_bitrate": p.video_bitrate,
+                "audio_bitrate": p.audio_bitrate,
+                "resolution": p.resolution,
+                "frame_rate": p.frame_rate,
+                "description": p.description,
+                "is_audio_only": p.is_audio_only,
+            }
+        )
+    return {"profiles": profiles}
+
+
+def _admin_key() -> str:
+    return os.getenv("PUBCAST_ADMIN_KEY", "").strip()
+
+
+def require_admin(request: Request):
+    key = _admin_key()
+    if not key:
+        return  # no admin key required
+    supplied = request.headers.get("x-admin-key") or request.headers.get("X-Admin-Key")
+    if supplied != key:
+        raise HTTPException(status_code=403, detail="Admin key required")
+
+
+# ---------- Unified Jobs (aggregate) ----------
+@app.get("/api/jobs/all")
+async def jobs_all(status: Optional[str] = None) -> Dict[str, Any]:
+    jobs: List[Dict[str, Any]] = []
+    # Collect from audio router
+    try:
+        from modules.audio_router import _jobs as audio_jobs  # type: ignore
+        jobs.extend(list(audio_jobs.values()))
+    except Exception:
+        pass
+    # Collect from edit router
+    try:
+        from modules.edit_router import _jobs as edit_jobs  # type: ignore
+        jobs.extend(list(edit_jobs.values()))
+    except Exception:
+        pass
+    if status is not None:
+        jobs = [j for j in jobs if str(j.get("status")) == status]
+    jobs.sort(key=lambda j: j.get("started", 0), reverse=True)
+    return {"jobs": jobs}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def jobs_cancel(job_id: str, request: Request) -> Dict[str, Any]:
+    # Admin-gated
+    require_admin(request)
+    import signal
+    cancelled = False
+    for mod_name in ("modules.audio_router", "modules.edit_router"):
+        try:
+            mod = __import__(mod_name, fromlist=["_jobs"])  # type: ignore
+            jobs = getattr(mod, "_jobs", {})
+            job = jobs.get(job_id)
+            if job and job.get("running"):
+                pid = job.get("pid")
+                if pid:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        job["running"] = False
+                        job["status"] = "cancelled"
+                        job["ended"] = time.time()
+                        cancelled = True
+                        break
+                    except Exception:
+                        # Try to mark failed if signal fails
+                        job["running"] = False
+                        job["status"] = "failed"
+                        job["ended"] = time.time()
+        except Exception:
+            continue
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"ok": True, "job_id": job_id}
+
+
+@app.get("/api/credentials/summary", response_model=CredentialSummaryResponse)
+def get_credentials_summary(request: Request, _: None = Depends(require_admin)):
+    uid = _get_or_set_uid(request)
+    providers = [entry.dict() for entry in user_model_manager.credential_summary(uid)]
+    return {"providers": providers}
+
+
+# ---------- Recording Sessions (feature toggle) ----------
+
+
+class RecordingStartRequest(BaseModel):
+    session_id: Optional[str] = None
+    sources: List[str]
+    profile_id: str
+    operator: Optional[str] = None
+    preset: Optional[str] = None
+    host_override: bool = False
+    countdown_seconds: Optional[int] = 5
+
+
+class RecordingUpdateRequest(BaseModel):
+    session_id: str
+
+
+class RecordingPauseRequest(BaseModel):
+    session_id: str
+    paused: bool
+
+
+def _recording_enabled() -> bool:
+    return os.getenv("PUBCAST_ENABLE_RECORDING", "").strip().lower() in ("1", "true", "yes")
+
+
+@app.get("/api/recordings/sources")
+def recording_sources(_: None = Depends(require_admin)):
+    sources = recording_service.list_sources()
+    return {"sources": [s.__dict__ for s in sources]}
+
+
+@app.get("/api/recordings/storage")
+def recording_storage(_: None = Depends(require_admin)):
+    return recording_service.storage_status()
+
+
+@app.get("/api/recordings/sessions")
+def recording_sessions(_: None = Depends(require_admin)):
+    sessions = [s.to_dict() for s in recording_service.list_sessions()]
+    return {"sessions": sessions}
+
+
+@app.get("/api/recordings/session/{session_id}")
+def recording_get(session_id: str, _: None = Depends(require_admin)):
+    try:
+        return {"session": recording_service.get_session(session_id).to_dict()}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@app.post("/api/recordings/session/start")
+def recording_start(body: RecordingStartRequest, request: Request, _: None = Depends(require_admin)):
+    if not _recording_enabled():
+        raise HTTPException(status_code=503, detail="Recording disabled")
+    operator = body.operator or _get_or_set_uid(request)
+    try:
+        session = recording_service.start_session(
+            session_id=body.session_id,
+            sources=list(body.sources or []),
+            profile_id=body.profile_id,
+            operator=operator,
+            preset=body.preset,
+            host_override=bool(body.host_override),
+            countdown_seconds=int(body.countdown_seconds or 0),
+        )
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"session": session.to_dict()}
+
+
+@app.post("/api/recordings/session/activate")
+def recording_activate(body: RecordingUpdateRequest, _: None = Depends(require_admin)):
+    if not _recording_enabled():
+        raise HTTPException(status_code=503, detail="Recording disabled")
+    try:
+        session = recording_service.activate_session(body.session_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"session": session.to_dict()}
+
+
+@app.post("/api/recordings/session/stop")
+def recording_stop(body: RecordingUpdateRequest, _: None = Depends(require_admin)):
+    if not _recording_enabled():
+        raise HTTPException(status_code=503, detail="Recording disabled")
+    try:
+        session = recording_service.stop_session(body.session_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"session": session.to_dict()}
+
+
+@app.post("/api/recordings/session/pause")
+def recording_pause(body: RecordingPauseRequest, _: None = Depends(require_admin)):
+    if not _recording_enabled():
+        raise HTTPException(status_code=503, detail="Recording disabled")
+    try:
+        session = recording_service.pause_session(body.session_id, body.paused)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"session": session.to_dict()}
+
+
+# ---------- Cameras Management ----------
+
+class CameraRegisterRequest(BaseModel):
+    source_id: str
+    name: str
+    description: str
+    location: str
+    transport: str
+    endpoint: str
+    audio_channels: int = 2
+    video_enabled: bool = True
+    audio_enabled: bool = True
+    tags: List[str] = []
+    is_private: bool = False
+
+
+class CameraStatusUpdate(BaseModel):
+    source_id: str
+    online: Optional[bool] = None
+    latency_ms: Optional[float] = None
+    notes: Optional[str] = None
+
+
+@app.get("/api/cameras", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_MONITOR))])
+def cameras_list():
+    sources = recording_service.list_sources()
     return {
-        "available":    True,
-        "ethereal":     _HAS_ETHEREAL and ethereal_mgr is not None,
-        "evo":          _HAS_EVO and evo_orchestrator is not None,
-        "mocap":        mocap is not None,
-        "bridge":       voxel_bridge is not None,
-        "voxel":        voxel_asset_manager is not None,
-        "studio":       studio_control is not None,
-        "ws_renderer":  __import__('pathlib').Path("bin/ws_renderer").exists(),
+        "sources": [
+            {
+                "source_id": s.source_id,
+                "name": s.name,
+                "description": s.description,
+                "location": s.location,
+                "transport": s.transport.value,
+                "endpoint": s.endpoint,
+                "audio_channels": s.audio_channels,
+                "video_enabled": s.video_enabled,
+                "audio_enabled": s.audio_enabled,
+                "tags": list(s.tags or []),
+                "is_private": s.is_private,
+            }
+            for s in sources
+        ]
     }
 
 
-@app.get("/api/audio/tts")
-@app.post("/api/audio/tts")
-async def audio_tts_alias(request: Request):
-    """tts.js calls /api/audio/tts — proxy to the inference TTS endpoint."""
-    if inference is None:
-        raise HTTPException(503, "Inference not available")
+@app.post("/api/cameras/register", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_CONFIG))])
+def cameras_register(body: CameraRegisterRequest):
     try:
-        body = await _json_dict(request) if request.method == "POST" else {}
+        transport = CameraTransport(body.transport)
     except Exception:
-        body = {}
-    text = body.get("text", body.get("prompt", ""))
-    voice = body.get("voice", "default")
-    if not text:
-        raise HTTPException(400, "text required")
-    # Delegate to existing TTS handler
-    result = await inference.tts(text=text, voice=voice) if hasattr(inference, "tts") else \
-             {"audio_url": None, "text": text, "note": "TTS engine not configured"}
-    return result
-
-
-@app.get("/api/cameras/program/{source_id}")
-async def get_program_camera(source_id: str):
-    """switcher.js — get program camera state."""
-    if cameras is None:
-        raise HTTPException(503, "Camera manager not available")
-    src = cameras.get(source_id)
-    if src is None:
-        raise HTTPException(404, f"Camera not found: {source_id}")
-    return {"source_id": source_id, "is_program": cameras.get_program_source() and
-            cameras.get_program_source().source_id == source_id}
-
-
-@app.post("/api/cameras/program/{source_id}")
-async def set_program_camera(source_id: str, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    """switcher.js — set program camera."""
-    if cameras is None:
-        raise HTTPException(503, "Camera manager not available")
-    ok = cameras.set_program_source(source_id)
-    if not ok:
-        raise HTTPException(404, f"Camera not found: {source_id}")
-    if hub:
-        await hub.broadcast_system_event({
-            "type": "camera_switch",
-            "payload": {"target": "program", "source_id": source_id}
-        })
-    if _HAS_PUBWORLD_ROUTER and push_production_state_to_pubworld:
-        await push_production_state_to_pubworld({"camera": source_id})
-    return {"ok": True, "program": source_id}
-
-
-@app.get("/api/cameras/preview/{source_id}")
-async def get_preview_camera(source_id: str):
-    """switcher.js — get preview camera state."""
-    if cameras is None:
-        raise HTTPException(503, "Camera manager not available")
-    src = cameras.get(source_id)
-    if src is None:
-        raise HTTPException(404, f"Camera not found: {source_id}")
-    return {"source_id": source_id, "is_preview": cameras.get_preview_source() and
-            cameras.get_preview_source().source_id == source_id}
-
-
-@app.post("/api/cameras/preview/{source_id}")
-async def set_preview_camera(source_id: str, identity: Dict[str, Any] = Depends(require_role("mod"))):
-    """switcher.js — set preview camera."""
-    if cameras is None:
-        raise HTTPException(503, "Camera manager not available")
-    ok = cameras.set_preview_source(source_id)
-    if not ok:
-        raise HTTPException(404, f"Camera not found: {source_id}")
-    if hub:
-        await hub.broadcast_system_event({
-            "type": "camera_switch",
-            "payload": {"target": "preview", "source_id": source_id}
-        })
-    return {"ok": True, "preview": source_id}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# WebSocket
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# ── PubWorld 2.5D client WS ──────────────────────────────────────────────────
-# world.html connects here. It tracks which room the player is in client-side
-# and sends room_change, ping, and hotspot action messages.
-
-_pubworld_clients: dict[str, WebSocket] = {}
-
-@app.websocket("/pubworld/ws/{client_id}")
-async def pubworld_ws(ws: WebSocket, client_id: str):
-    await ws.accept()
-    _pubworld_clients[client_id] = ws
-
-    # Send welcome with production state
-    welcome_payload: dict = {"type": "welcome", "payload": {}}
-    if hub:
-        welcome_payload["payload"]["production_state"] = hub.get_production_state()
-    await ws.send_text(json.dumps(welcome_payload))
-
-    try:
-        while True:
-            raw = await ws.receive_text()
-            try:
-                data = json.loads(raw)
-            except Exception:
-                continue
-
-            msg_type = data.get("type", "")
-
-            if msg_type == "ping":
-                await ws.send_text(json.dumps({"type": "pong"}))
-
-            elif msg_type == "room_change":
-                # Player moved to a new room in the 2.5D world
-                room_id = data.get("room", "")
-                logger.debug("PubWorld client %s entered room %s", client_id, room_id)
-                await ws.send_text(json.dumps({"type": "room_ack", "room": room_id}))
-
-            elif msg_type == "hotspot":
-                # Hotspot action — dispatch through the hotspot handler
-                from modules.pubworld_hotspots import ACTION_HANDLERS
-                action = data.get("action", "")
-                action_data = data.get("data", {})
-                handler = ACTION_HANDLERS.get(action)
-                if handler:
-                    try:
-                        result = handler(client_id, data.get("room", ""), action_data)
-                        await ws.send_text(json.dumps({"type": "hotspot_result", **result}))
-                    except Exception as exc:
-                        await ws.send_text(json.dumps({"type": "hotspot_result", "status": "error", "message": str(exc)}))
-                else:
-                    await ws.send_text(json.dumps({"type": "hotspot_result", "status": "unknown_action", "action": action}))
-
-            elif msg_type == "player_move":
-                # Position update — could broadcast to other clients for presence
-                pass
-
-    except WebSocketDisconnect:
-        pass
-    except Exception as exc:
-        logger.warning("PubWorld WS error for client %s: %s", client_id, exc)
-    finally:
-        _pubworld_clients.pop(client_id, None)
-
-
-# ── Unity bridge WebSocket ─────────────────────────────────────────────────────
-
-@app.websocket("/unity/ws/{client_id}")
-async def unity_ws(ws: WebSocket, client_id: str):
-    """Unity C# clients connect here to bridge WorldBrain state and EventBus."""
-    if unity_bridge is None:
-        await ws.close(code=1013, reason="Unity bridge not initialized")
-        return
-    await unity_bridge.handle_connection(ws)
-
-
-# ── Studio Control WebSocket ───────────────────────────────────────────────────
-
-@app.websocket("/studio/ws")
-async def studio_control_ws(ws: WebSocket):
-    """Studio control surface (studio_control_room.html) connects here."""
-    if studio_ws_handler is None:
-        await ws.accept()
-        await ws.send_json({"type": "error", "message": "Studio Control not initialized"})
-        await ws.close()
-        return
-    await studio_ws_handler.handle(ws)
-
-
-# ── Chat/production WS (original) ────────────────────────────────────────────
-
-@app.websocket("/ws/{room}")
-async def websocket_room(ws: WebSocket, room: str):
-    if not hub:
-        await ws.close(code=1013, reason="Hub not ready")
-        return
-
-    user_id   = ws.query_params.get("user_id", "")
-    user_role = ws.query_params.get("role", "guest")
-
-    if governance and user_id:
-        banned, reason = governance.is_banned(user_id)
-        if banned:
-            await ws.close(code=4403, reason=f"Banned: {reason}")
-            return
-
-    # GAP 3: waiting room intercept — non-hosts must be approved before entering
-    if waiting_room_manager and user_id and user_role != "host":
-        if waiting_room_manager.should_intercept(user_id, role=user_role):
-            await ws.accept()
-            await ws.send_json({
-                "type":    "waiting_room_intercept",
-                "message": "Please wait in the waiting room for host approval.",
-                "action":  "redirect",
-                "url":     "/waiting_room.html",
-            })
-            await ws.close(code=4000, reason="waiting_room")
-            return
-
-    user_is_muted = bool(governance and user_id and governance.is_muted(user_id))
-
-    await hub.connect(ws, room)
-
-    tc = getattr(app.state, "thinking_context", None)
-    if tc:
-        try:
-            await tc.watch_room(room)
-        except Exception:
-            pass
-
-    try:
-        while True:
-            raw = await ws.receive_text()
-
-            if user_is_muted:
-                continue
-
-            # Ethereal avatar messages
-            if _HAS_ETHEREAL and ethereal_mgr:
-                try:
-                    parsed = json.loads(raw)
-                    if parsed.get("type", "") in ETHEREAL_TYPES:
-                        await handle_ethereal_ws_message(ethereal_mgr, hub, room, parsed)
-                        continue
-                except Exception:
-                    pass
-
-            # Lighting messages
-            if lighting_hub_patch:
-                try:
-                    parsed = json.loads(raw)
-                    if parsed.get("type", "").startswith("lighting_"):
-                        lighting_hub_patch.handle_message(parsed)
-                        continue
-                except Exception:
-                    pass
-
-            await hub.handle_message(ws, room, raw)
-
-            if tc:
-                try:
-                    data = json.loads(raw)
-                    if data.get("type") == "chat":
-                        asyncio.create_task(tc.on_message(
-                            room,
-                            data.get("user_id", data.get("user", "anon")),
-                            data.get("text", ""),
-                        ))
-                except Exception:
-                    pass
-
-    except WebSocketDisconnect:
-        pass
-    except Exception as exc:
-        logger.warning("WebSocket error in room %r: %s", room, exc)
-    finally:
-        await hub.disconnect(ws, room)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Helpers
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _build_character_profiles() -> list:
-    if not _HAS_THINKING_CONTEXT or not CharacterProfile or not bot_manager:
-        return []
-    return [
-        CharacterProfile(
-            character_id=f"bot-{cfg.bot_id}",
-            name=cfg.name,
-            role="host" if cfg.auto_reply else "guest",
-        )
-        for cfg in bot_manager.list_configs()
-    ]
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Entry
-# ═══════════════════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host=settings.host,
-        port=settings.port,
-        reload=settings.debug,
-        log_level="debug" if settings.debug else "info",
+        raise HTTPException(status_code=400, detail="invalid transport")
+    src = CameraSource(
+        source_id=body.source_id.strip(),
+        name=body.name.strip(),
+        description=body.description.strip(),
+        location=body.location.strip(),
+        transport=transport,
+        endpoint=body.endpoint.strip(),
+        audio_channels=int(body.audio_channels),
+        video_enabled=bool(body.video_enabled),
+        audio_enabled=bool(body.audio_enabled),
+        tags=list(body.tags or []),
+        is_private=bool(body.is_private),
     )
+    try:
+        recording_service.cameras.register(src)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True}
+
+
+@app.delete("/api/cameras/{source_id}", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_CONFIG))])
+def cameras_remove(source_id: str):
+    recording_service.cameras.remove(source_id)
+    return {"ok": True}
+
+
+@app.get("/api/cameras/status", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_MONITOR))])
+def cameras_status():
+    return {"status": [s.__dict__ for s in recording_service.cameras.list_status()]}
+
+
+@app.post("/api/cameras/status", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_MONITOR))])
+def cameras_status_update(body: CameraStatusUpdate):
+    try:
+        recording_service.cameras.set_status(
+            body.source_id,
+            online=body.online,
+            latency_ms=body.latency_ms,
+            notes=body.notes,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown camera")
+    return {"ok": True}
+
+
+@app.get("/api/cameras/privacy", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_MONITOR))])
+def cameras_privacy():
+    return {"privacy": recording_service.privacy_matrix()}
+
+
+@app.put("/api/cameras/privacy", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_CONFIG))])
+def cameras_privacy_put(payload: Dict[str, Dict[str, str]]):
+    try:
+        recording_service.configure_room_privacy(payload or {})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "privacy": recording_service.privacy_matrix()}
+
+
+@app.post("/api/recordings/session/archive")
+def recording_archive(body: RecordingUpdateRequest, _: None = Depends(require_admin)):
+    if not _recording_enabled():
+        raise HTTPException(status_code=503, detail="Recording disabled")
+    try:
+        session = recording_service.archive_session(body.session_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"session": session.to_dict()}
+
+
+# ---------- PubWorld Scenes ----------
+@app.post("/api/pubworld/scenes", response_model=PubWorldSceneResponse)
+def pw_create(body: PubWorldSceneCreate):
+    scene = create_scene(
+        DATA_DIR,
+        name=body.name,
+        description=body.description,
+        grid=[c for c in body.grid],
+        atmosphere=body.atmosphere.dict() if hasattr(body.atmosphere, "dict") else body.atmosphere,
+        triggers=[t for t in body.triggers],
+    )
+    return {"scene": scene.dict()}
+
+
+@app.get("/api/pubworld/scenes", response_model=PubWorldScenesResponse)
+def pw_list():
+    scenes = [s.dict() for s in list_scenes(DATA_DIR)]
+    return {"scenes": scenes}
+
+
+@app.get("/api/pubworld/scenes/{scene_id}", response_model=PubWorldSceneResponse)
+def pw_get(scene_id: str):
+    try:
+        scene = get_scene(DATA_DIR, scene_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"scene": scene.dict()}
+
+
+@app.put("/api/pubworld/scenes/{scene_id}", response_model=PubWorldSceneResponse)
+def pw_update(scene_id: str, body: PubWorldSceneUpdate):
+    payload: Dict[str, Any] = {k: v for k, v in body.dict().items() if v is not None}
+    try:
+        scene = update_scene(DATA_DIR, scene_id, payload)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"scene": scene.dict()}
+
+
+@app.delete("/api/pubworld/scenes/{scene_id}")
+def pw_delete(scene_id: str):
+    delete_scene(DATA_DIR, scene_id)
+    return Response(status_code=204)
+
+
+@app.get("/api/pubworld/scenes/{scene_id}/timeline", response_model=PubWorldTimelineResponse)
+def pw_timeline_get(scene_id: str):
+    timeline = get_timeline(DATA_DIR, scene_id)
+    return {"timeline": timeline.dict()}
+
+
+@app.put("/api/pubworld/scenes/{scene_id}/timeline", response_model=PubWorldTimelineResponse)
+def pw_timeline_put(scene_id: str, body: PubWorldTimelineUpdate):
+    timeline = update_timeline(DATA_DIR, scene_id, events=body.events or [])
+    return {"timeline": timeline.dict()}
+
+
+@app.get("/api/pubworld/assets")
+def pw_assets():
+    return {"placeholders": list_placeholder_assets()}
+
+
+# Keep simple performance plan storage compatible with earlier minimal API
+@app.get("/api/pubworld/scenes/{scene_id}/performance", response_model=PerformancePlanResponse)
+def get_scene_perf(scene_id: str):
+    plan = get_perf_plan(DATA_DIR, scene_id)
+    return {"plan": plan.dict()}
+
+
+@app.put("/api/pubworld/scenes/{scene_id}/performance", response_model=PerformancePlanResponse)
+def put_scene_perf(scene_id: str, body: PerformancePlanUpdate):
+    payload = {k: v for k, v in body.dict().items() if v is not None}
+    plan = update_perf_plan(DATA_DIR, scene_id, payload)
+    return {"plan": plan.dict()}
+
+
+# ---------- Media artifact passthrough ----------
+@app.get("/api/recordings/{session_id}/artifacts/{name}")
+def get_artifact(session_id: str, name: str):
+    f = DATA_DIR / "media" / "recordings" / session_id / name
+    if not f.exists():
+        raise HTTPException(404, "Artifact not found")
+    return FileResponse(f)
+
+
+# ---------- Safe download helper for recordings (path constraint) ----------
+@app.get("/api/recordings/download")
+def download_recording(path: str):
+    base = (DATA_DIR / "media" / "recordings").resolve()
+    try:
+        if not path or ".." in path:
+            raise ValueError("invalid path")
+        rel = Path(path)
+        if rel.is_absolute():
+            raise ValueError("absolute not allowed")
+        full = (base / rel).resolve()
+        if not str(full).startswith(str(base)):
+            raise ValueError("outside base")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not full.exists() or not full.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(full)
+
+
+# ---------- Video (Conference) Token (optional LiveKit) ----------
+@app.post("/api/video/token")
+def video_token(request: Request, body: Dict[str, Any] | None = None):
+    """
+    Returns a LiveKit access token if VIDEO_PROVIDER=livekit and keys are set.
+    .env required: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+    Token is a JWT signed with HS256 containing room join grants.
+    """
+    provider = os.getenv("VIDEO_PROVIDER", "local").strip().lower()
+    if provider != "livekit":
+        raise HTTPException(status_code=503, detail="LiveKit disabled")
+    room = None
+    if isinstance(body, dict):
+        room = body.get("room")
+    room = (room or "conference").strip()
+    identity = request.cookies.get("pubcast_uid") or f"guest-{uuid.uuid4().hex[:6]}"
+    name = identity[:8]
+
+    url = os.getenv("LIVEKIT_URL", "").strip()
+    api_key = os.getenv("LIVEKIT_API_KEY", "").strip()
+    api_secret = os.getenv("LIVEKIT_API_SECRET", "").strip()
+    if not (url and api_key and api_secret):
+        raise HTTPException(status_code=503, detail="LiveKit not configured")
+
+    try:
+        import jwt  # PyJWT
+    except Exception:
+        raise HTTPException(status_code=503, detail="PyJWT not installed on server")
+
+    now = int(time.time())
+    payload = {
+        "iss": api_key,
+        "sub": "video",
+        "nbf": now - 10,
+        "exp": now + 3600,
+        "video": {
+            "room": room,
+            "roomJoin": True,
+            "canPublish": True,
+            "canSubscribe": True,
+            "canPublishData": True,
+            "identity": identity,
+            "name": name,
+        },
+    }
+    token = jwt.encode(payload, api_secret, algorithm="HS256")
+    return {"ok": True, "token": token, "url": url}
+
+
+# ---------- Azure Speech TTS (optional) ----------
+class TTSPayload(BaseModel):
+    text: str
+    voice: Optional[str] = None  # e.g., en-US-JennyNeural
+    style: Optional[str] = None
+    provider: Optional[str] = None  # optional override
+
+
+@app.post("/api/tts")
+def tts_endpoint(body: TTSPayload) -> Dict[str, Any]:
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    provider = (body.provider or os.getenv("TTS_PROVIDER", "browser")).strip().lower()
+    if provider == "browser":
+        raise HTTPException(status_code=503, detail="Client should use browser TTS")
+    if provider == "piper":
+        piper_bin = os.getenv("PIPER_BIN", "piper").strip()
+        piper_model = os.getenv("PIPER_MODEL", "").strip()
+        if not piper_model:
+            raise HTTPException(status_code=503, detail="Piper not configured (PIPER_MODEL)")
+        args = [piper_bin, "-m", piper_model]
+        length_scale = os.getenv("PIPER_LENGTH_SCALE", "").strip()
+        noise_scale = os.getenv("PIPER_NOISE_SCALE", "").strip()
+        if length_scale:
+            args += ["--length_scale", length_scale]
+        if noise_scale:
+            args += ["--noise_scale", noise_scale]
+        # Output to a temp wav
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            out_path = tmp.name
+        args += ["-f", out_path]
+        try:
+            completed = subprocess.run(args, input=text.encode("utf-8"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            data = Path(out_path).read_bytes()
+        except FileNotFoundError:
+            raise HTTPException(status_code=503, detail="Piper binary not found")
+        except subprocess.CalledProcessError as exc:
+            raise HTTPException(status_code=500, detail=f"Piper failed: {exc.stderr.decode('utf-8', 'ignore')}") from exc
+        finally:
+            try:
+                Path(out_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        b64 = base64.b64encode(data).decode("ascii")
+        return {"ok": True, "audio_b64": b64, "format": "wav", "voice": body.voice or "piper"}
+    # Default to Azure
+    key = os.getenv("AZURE_SPEECH_KEY", "").strip()
+    region = os.getenv("AZURE_SPEECH_REGION", "").strip()
+    if not key or not region:
+        raise HTTPException(status_code=503, detail="Azure TTS not configured")
+    try:
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore
+    except Exception:
+        raise HTTPException(status_code=503, detail="Azure Speech SDK not installed")
+
+    voice = body.voice or os.getenv("AZURE_SPEECH_VOICE", "en-US-JennyNeural")
+    speech_config = speechsdk.SpeechConfig(subscription=key, region=region)
+    speech_config.speech_synthesis_voice_name = voice
+    synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
+    result = synthesizer.speak_text_async(text).get()
+    if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
+        err = getattr(result, 'cancellation_details', None)
+        detail = getattr(err, 'reason', 'synthesis_failed') if err else 'synthesis_failed'
+        raise HTTPException(status_code=500, detail=f"Azure TTS failed: {detail}")
+    audio_bytes = result.audio_data
+    b64 = base64.b64encode(audio_bytes).decode("ascii")
+    return {"ok": True, "audio_b64": b64, "format": "wav", "voice": voice}
+
+
+# ---------- Bot speak (inject chat as bot) ----------
+class BotSpeakPayload(BaseModel):
+    room: str
+    bot_id: str
+    text: str
+
+
+@app.post("/api/bots/say")
+async def bot_say(body: BotSpeakPayload, _: None = Depends(require_admin)) -> Dict[str, Any]:
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    cfg = bot_manager.get_config(body.bot_id)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="bot not found")
+    room = body.room.strip() or "conference"
+    profile_name = cfg.name or cfg.bot_id
+    record = {
+        "t": time.time(),
+        "room": room,
+        "user_id": f"bot-{cfg.bot_id}",
+        "user": profile_name,
+        "avatar_color": "#40d9ff",
+        "badge": "BOT",
+        "text": text,
+    }
+    await append_jsonl_async(hub._log_path(room), record)  # type: ignore[attr-defined]
+    await hub._broadcast(room, {"type": "chat", "payload": record})  # type: ignore[attr-defined]
+    return {"ok": True}
+
+
+# ---------- Bots (Co-hosts) ----------
+@app.get("/api/bots")
+def list_bots() -> Dict[str, Any]:
+    items = []
+    for cfg in bot_manager.list_configs():
+        items.append(
+            {
+                "bot_id": cfg.bot_id,
+                "display_name": cfg.name,
+                "provider": cfg.provider.value if hasattr(cfg.provider, "value") else str(cfg.provider),
+                "model": cfg.model,
+                "rooms": cfg.enabled_rooms,
+                "auto_reply": cfg.auto_reply,
+                "mention_only": cfg.mention_only,
+                "shadow_presence": cfg.shadow_presence,
+            }
+        )
+    return {"bots": items}
+
+
+@app.post("/api/bots")
+def upsert_bot(request: Request, body: Dict[str, Any], _: None = Depends(require_admin)) -> Dict[str, Any]:
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # Map incoming UI payload to BotConfig fields
+    from modules.models import BotConfig, BotProvider
+
+    uid = request.cookies.get("pubcast_uid") or "system"
+    bot_id = (body.get("bot_id") or body.get("agent_id") or "").strip()
+    display_name = (body.get("name") or body.get("display_name") or bot_id or "Bot").strip()
+    provider_raw = (body.get("provider") or "").strip().lower()
+    model = (body.get("model") or "").strip()
+    key_env = (body.get("api_key_env") or body.get("key_env") or "").strip()
+    system_prompt = body.get("system_prompt") or ""
+    enabled_rooms = body.get("enabled_rooms") or body.get("rooms") or ["green"]
+
+    options = body.get("options") or {}
+    auto_reply = bool(body.get("auto_reply", options.get("auto_reply", True)))
+    mention_only = bool(body.get("mention_only", options.get("respond_on_mention", False)))
+    shadow_presence = bool(body.get("shadow_presence", options.get("shadow_in_roster", True)))
+
+    if not bot_id:
+        raise HTTPException(status_code=400, detail="bot_id/agent_id is required")
+    if provider_raw not in {"openai", "gemini", "anthropic", "qwen"}:
+        raise HTTPException(status_code=400, detail="provider must be openai|gemini|anthropic|qwen")
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+    if not key_env:
+        raise HTTPException(status_code=400, detail="api_key_env/key_env is required")
+
+    try:
+        provider = BotProvider(provider_raw)
+    except Exception:
+        provider = BotProvider.OPENAI
+
+    cfg = BotConfig(
+        bot_id=bot_id,
+        name=display_name,
+        provider=provider,
+        model=model,
+        owner_id=uid,
+        api_key_env=key_env,
+        system_prompt=system_prompt,
+        enabled_rooms=enabled_rooms,
+        auto_reply=auto_reply,
+        mention_only=mention_only,
+        shadow_presence=shadow_presence,
+    )
+    try:
+        bot_manager.upsert_config(cfg)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid bot config: {exc}") from exc
+    return {"ok": True, "bot": cfg.dict()}
+
+
+@app.delete("/api/bots/{bot_id}")
+def delete_bot(bot_id: str, _: None = Depends(require_admin)) -> Dict[str, Any]:
+    if not bot_id:
+        raise HTTPException(status_code=400, detail="bot_id required")
+    bot_manager.delete_config(bot_id)
+    return {"ok": True}
+
+
+@app.post("/api/bots/reload")
+def reload_bots(_: None = Depends(require_admin)) -> Dict[str, Any]:
+    bot_manager.reload()
+    return {"ok": True, "count": len(bot_manager.list_configs())}
+
+
+# ---------- Presence state (optional health) ----------
+@app.get("/api/presence/state")
+async def presence_state() -> Dict[str, Any]:
+    try:
+        return await hub.presence_state()
+    except Exception:
+        # best-effort introspection fallback
+        return {"rooms": []}
+
+
+
+
+
+# Optional configuration validation (best effort)
+try:
+    from config import validate_config as _validate_config
+    try:
+        _validate_config()
+    except Exception:
+        pass
+except Exception:
+    pass
+
+
+# Shepard management endpoints
+
+class ShepardRecoveryRequest(BaseModel):
+    policy: str
+
+@app.get("/api/shepard/status", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_MONITOR))])
+async def shepard_status(request: Request):
+    svc = getattr(request.app.state, "shepard", None)
+    if not svc:
+        return {"ok": True, "status": {"enabled": False}}
+    try:
+        return {"ok": True, "status": svc.status()}
+    except Exception:
+        return {"ok": False}
+
+
+@app.post("/api/shepard/config", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_CONFIG))])
+async def shepard_config(request: Request, body: Dict[str, Any] = Body(default_factory=dict)):
+    svc = getattr(request.app.state, "shepard", None)
+    if not svc:
+        raise HTTPException(status_code=503, detail="shepard_not_running")
+    cfg = svc.update_config(
+        enabled=bool(body.get("enabled")) if "enabled" in body else svc._config.enabled,  # noqa: SLF001
+        quiet_seconds=int(body.get("quiet_seconds") or svc._config.quiet_seconds),  # noqa: SLF001
+        min_gap_seconds=int(body.get("min_gap_seconds") or svc._config.min_gap_seconds),  # noqa: SLF001
+        tick_seconds=int(body.get("tick_seconds") or svc._config.tick_seconds),  # noqa: SLF001
+        strategy=str(body.get("strategy") or svc._config.strategy),  # noqa: SLF001
+    )
+    return {"ok": True, "config": cfg.__dict__}
+
+
+@app.post("/api/shepard/recovery", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_CONFIG))])
+async def shepard_recovery(request: Request, body: ShepardRecoveryRequest):
+    svc = getattr(request.app.state, "shepard", None)
+    if not svc:
+        raise HTTPException(status_code=503, detail="shepard_not_running")
+    try:
+        policy = svc.update_recovery_policy(body.policy)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "recovery_policy": policy}
+
+
+@app.post("/api/shepard/nudge", dependencies=[Depends(require_permission_or_admin(Permission.SYSTEM_MONITOR))])
+async def shepard_nudge(request: Request, body: Dict[str, Any] = Body(default_factory=dict)):
+    room = str(body.get("room") or "control").strip()
+    line = body.get("message")
+    svc = getattr(request.app.state, "shepard", None)
+    if not svc:
+        raise HTTPException(status_code=503, detail="shepard_not_running")
+    await svc.nudge_now(room, line=str(line) if line else None)
+    return {"ok": True}

@@ -1,0 +1,15 @@
+.pc-console-toggle{position:fixed;left:12px;bottom:60px;z-index:9999;background:#0b1324;color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:8px 10px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.35);font:600 12px system-ui}
+.pc-console{position:fixed;left:12px;bottom:110px;width:440px;max-height:70vh;display:none;flex-direction:column;background:#0b1324;color:#e8eefc;border:1px solid rgba(255,255,255,.15);border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.45);z-index:9999}
+.pc-console.open{display:flex}
+.pc-header{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.12)}
+.pc-tabs{display:flex;gap:6px;padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.08)}
+.pc-tabs button{background:#121a2e;color:#cbd5f5;border:1px solid rgba(255,255,255,.1);border-radius:999px;padding:4px 10px;font:600 12px system-ui;cursor:pointer}
+.pc-tabs button.active{background:#1e2a4a;color:#fff}
+.pc-body{padding:8px 10px;overflow:auto}
+.pc-row{display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap}
+.pc-label{color:#93a8d8;font-size:12px}
+.pc-input{background:#0f172a;color:#e8eefc;border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:6px 8px}
+.pc-small{font-size:12px;color:#9bb0e0}
+.pc-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
+.pc-chip{border-radius:999px;padding:2px 8px;background:#1b2747;color:#fff;font-size:11px}
+.pc-list{max-height:180px;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px}

@@ -1,0 +1,223 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>PubCast AI V7</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <div class="logo">PubCast</div>
+    <nav>
+      <button class="nav-btn" data-room="dressing">Dressing</button>
+      <button class="nav-btn" data-room="green">Green Room</button>
+      <button class="nav-btn" data-room="studio">Studio</button>
+      <button class="nav-btn" data-room="control">Control Room</button>
+      <button class="nav-btn" data-room="conference">Conference</button>
+      <button class="nav-btn" data-room="pub">Pub</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Views -->
+    <section id="view-dressing" class="view">
+      <h2>Dressing Room</h2>
+      <div class="room-nav" data-room-nav="dressing"></div>
+      <div class="grid two">
+        <div>
+          <h3>Mirror</h3>
+          <div id="mirror-preview" class="mirror">
+            <div class="avatar" id="avatar-preview"></div>
+            <div class="name" id="name-preview"></div>
+          </div>
+        </div>
+        <div>
+          <h3>Wardrobe</h3>
+          <form id="wardrobe-form">
+            <label>Display Name <input type="text" id="displayName"/></label>
+            <label>Avatar Color <input type="color" id="avatarColor" value="#00e0ff"/></label>
+            <label>Badge <input type="text" id="badge"/></label>
+            <div class="row">
+              <button type="submit">Save</button>
+            </div>
+          </form>
+          <h3>Upload (<=5MB)</h3>
+          <form id="upload-form">
+            <input type="file" id="uploadFile"/>
+            <select id="uploadTarget">
+              <option value="">My Uploads</option>
+              <option value="vod">Replay (assets/vod)</option>
+            </select>
+            <button type="submit">Upload</button>
+            <div id="upload-result"></div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-green" class="view hidden">
+      <h2>Green Room</h2>
+      <div class="room-nav" data-room-nav="green"></div>
+      <div class="grid two">
+        <div>
+          <h3>Program Monitor <span id="program-badge" class="badge">LIVE</span></h3>
+          <div id="monitor">
+            <video id="replay-video" controls class="hidden"></video>
+            <div id="live-banner" class="live">ON AIR</div>
+            <div id="lower-third" class="lower-third"></div>
+          </div>
+        </div>
+        <div>
+          <h3>Roster</h3>
+          <ul id="roster"></ul>
+          <p class="muted">You will be invited when it's your turn.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-studio" class="view hidden">
+      <h2>Studio</h2>
+      <div class="room-nav" data-room-nav="studio"></div>
+      <div id="studio-stage">
+        <div id="studio-onair" class="onair hidden">ON AIR</div>
+        <div id="studio-lower-third" class="lower-third"></div>
+        <div id="studio-camera" class="camera">Camera: <span id="camera-mode">wide</span></div>
+        <div id="studio-lighting" class="lighting">Lighting: <span id="lighting-mode">normal</span></div>
+      </div>
+    </section>
+
+    <section id="view-control" class="view hidden">
+      <h2>Control Room</h2>
+      <div class="room-nav" data-room-nav="control"></div>
+      <form id="control-form" class="grid two">
+        <div>
+          <label>Mode
+            <select id="prod-mode">
+              <option value="LIVE">LIVE</option>
+              <option value="REPLAY">REPLAY</option>
+            </select>
+          </label>
+          <label>On Air
+            <select id="prod-onair">
+              <option value="false">OFF</option>
+              <option value="true">ON</option>
+            </select>
+          </label>
+          <label>Replay Asset (assets/vod/...)
+            <input type="text" id="prod-replay" placeholder="vod_filename.mp4"/>
+          </label>
+          <label>Lower Third
+            <input type="text" id="prod-lower" placeholder="Guest Name / Title"/>
+          </label>
+        </div>
+        <div>
+          <label>Camera
+            <select id="prod-camera">
+              <option value="wide">wide</option>
+              <option value="closeup">closeup</option>
+              <option value="overhead">overhead</option>
+            </select>
+          </label>
+          <label>Lighting
+            <select id="prod-lighting">
+              <option value="normal">normal</option>
+              <option value="warm">warm</option>
+              <option value="cool">cool</option>
+            </select>
+          </label>
+          <div class="row">
+            <button type="submit">Push to Program</button>
+          </div>
+          <div class="muted small">Tip: this broadcasts to all rooms via WebSocket.</div>
+        </div>
+      </form>
+
+      <section id="bot-admin" class="panel">
+        <h3>AI Co-hosts</h3>
+        <p class="muted small">Configure companion agents like ChatGPT or Gemini. Set their API key environment variable before running the server.</p>
+        <form id="bot-form" class="bot-form">
+          <div class="grid two">
+            <label>Bot ID
+              <input type="text" id="bot-id" placeholder="chatgpt" required/>
+            </label>
+            <label>Display Name
+              <input type="text" id="bot-name" placeholder="ChatGPT" required/>
+            </label>
+            <label>Provider
+              <select id="bot-provider">
+                <option value="openai">OpenAI / ChatGPT</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+            </label>
+            <label>Model
+              <input type="text" id="bot-model" placeholder="gpt-4o-mini" required/>
+            </label>
+            <label>API Key Env Var
+              <input type="text" id="bot-key" placeholder="PUBCAST_OPENAI_KEY" required/>
+            </label>
+            <label>Rooms (Ctrl/Cmd+Click to select)
+              <select id="bot-rooms" multiple size="5">
+                <option value="dressing">Dressing</option>
+                <option value="green" selected>Green</option>
+                <option value="studio">Studio</option>
+                <option value="control">Control</option>
+                <option value="conference">Conference</option>
+                <option value="pub">Pub</option>
+              </select>
+            </label>
+          </div>
+          <label>System Prompt
+            <textarea id="bot-system" rows="3" placeholder="Set tone, role, and guardrails for the co-host."></textarea>
+          </label>
+          <div class="bot-options">
+            <label><input type="checkbox" id="bot-auto" checked/> Auto reply</label>
+            <label><input type="checkbox" id="bot-mention"/> Respond when mentioned</label>
+            <label><input type="checkbox" id="bot-shadow" checked/> Show in roster with owner</label>
+          </div>
+          <div class="row">
+            <button type="submit">Save Co-host</button>
+          </div>
+        </form>
+        <ul id="bot-list" class="bot-list"></ul>
+      </section>
+
+      <pre id="prod-json" class="code"></pre>
+    </section>
+
+    <section id="view-conference" class="view hidden">
+      <h2>Conference (Placeholder)</h2>
+      <div class="room-nav" data-room-nav="conference"></div>
+      <p>Traditional meeting space - screen share, agenda, etc. Coming soon.</p>
+    </section>
+
+    <section id="view-pub" class="view hidden">
+      <h2>The Pub (Placeholder)</h2>
+      <div class="room-nav" data-room-nav="pub"></div>
+      <p>Side-scrolling world and fixed camera mini-games will plug in here.</p>
+    </section>
+  </main>
+
+  <!-- Chat Drawer -->
+  <aside id="chat-drawer" class="drawer">
+    <div class="drawer-tab" id="drawer-tab">Chat</div>
+    <div class="drawer-body">
+      <div class="drawer-header">
+        <span>Chat</span>
+        <span id="presence" class="presence">0 online</span>
+      </div>
+      <div id="chat-log" class="chat-log"></div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" placeholder="Type a message..."/>
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </aside>
+
+  <script src="/static/ws.js"></script>
+  <script src="/static/ui.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
+

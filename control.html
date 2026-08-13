@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PubCast Control Room</title>
+  <link rel="stylesheet" href="/static/control.css" />
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+</head>
+<body>
+  <header class="control-header">
+    <div class="title-block">
+      <h1>Control Room</h1>
+      <p>The brain of the production - recording, monitoring, and guidance.</p>
+    </div>
+    <div class="operator-tools">
+      <label class="toggle">
+        <input type="checkbox" id="host-override" />
+        <span>Host override enabled</span>
+      </label>
+      <button id="refresh-btn" class="ghost">Refresh Status</button>
+    </div>
+  </header>
+
+  <main class="control-grid">
+    <section class="panel active-panel">
+      <div class="panel-head">
+        <h2>Active Recordings</h2>
+        <div class="quick-group">
+          <button class="ghost" data-action="pause-all">Pause All</button>
+          <button class="ghost" data-action="resume-all">Resume All</button>
+          <button class="ghost" data-action="stop-all">Stop All</button>
+        </div>
+      </div>
+      <div id="active-sessions" class="list">Loading...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Quick Start Presets</h2>
+      <div id="preset-buttons" class="preset-grid"></div>
+    </section>
+
+    <section class="panel sources-panel">
+      <h2>Manual Configuration</h2>
+      <form id="manual-form" class="form">
+        <div id="source-checkboxes" class="checkbox-grid"></div>
+        <div class="form-row">
+          <label>Profile
+            <select id="profile-select"></select>
+          </label>
+          <label>Session Label
+            <input type="text" id="manual-session" placeholder="rec_custom" />
+          </label>
+          <button type="submit" class="primary">Start Recording</button>
+        </div>
+        <p id="manual-status" class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel diagnostics">
+      <h2>Systems Status</h2>
+      <div class="status-grid" id="systems-status">
+        <div class="status-card">
+          <h3>Inference Worker</h3>
+          <div id="inference-status" class="status-body">Loading...</div>
+        </div>
+        <div class="status-card">
+          <h3>Scenes & Plans</h3>
+          <div id="performance-status" class="status-body">Loading...</div>
+        </div>
+      </div>
+      <div class="storage" id="storage-status"></div>
+      <div class="room-grid" id="room-status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Pose Capture</h2>
+      <div class="form">
+        <label>Room
+          <input type="text" id="pose-room" value="green" />
+        </label>
+        <label>Scene
+          <select id="pose-scene"></select>
+        </label>
+        <div class="form-inline" style="gap:8px;">
+          <button id="pose-rec-start" class="ghost">Start Recording</button>
+          <button id="pose-rec-stop" class="ghost danger">Stop & Save</button>
+        </div>
+        <p id="pose-rec-status" class="status"></p>
+      </div>
+    </section>
+
+    <section class="panel log-panel">
+      <h2>Event Log</h2>
+      <pre id="control-log" class="log"></pre>
+    </section>
+  </main>
+
+  <footer class="control-footer">
+    <span>Sir Perulous murmurs: <em id="perulous-quote"></em></span>
+    <div class="links">
+      <a href="/dressing">Return to Dressing Room</a>
+      <a href="/map">Backstage Map</a>
+    </div>
+  </footer>
+
+  <script src="/static/control.js" type="module"></script>
+</body>
+</html>

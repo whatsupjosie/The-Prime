@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PubCast Studio Login</title>
+  <link rel="stylesheet" href="/static/login.css" />
+</head>
+<body>
+  <main class="login-shell">
+    <section class="marquee">
+      <h1>PubCast Studio</h1>
+      <p>Step into the dressing room and bring your show to life.</p>
+    </section>
+    <section class="login-panel">
+      <h2>Enter the Studio</h2>
+      <form id="login-form" class="form">
+        <label>Display Name
+          <input type="text" id="display-name" maxlength="32" placeholder="Eg. Nova Sparks" required />
+        </label>
+        <label>Preferred Color
+          <input type="color" id="primary-color" value="#ffd84d" />
+        </label>
+        <div class="options">
+          <label><input type="checkbox" id="remember-me" checked /> Remember me on this device</label>
+        </div>
+        <button type="submit" class="primary">Enter Dressing Room</button>
+        <p id="login-status" class="status"></p>
+      </form>
+      <div class="tips" id="perulous-tip">
+        <strong>Sir Perulous whispers...</strong>
+        <p>"The cameras may be new, but stage fright is ancient. Take a breath."</p>
+      </div>
+    </section>
+  </main>
+  <footer class="login-footer">
+    <div>Need access? <a href="#">Request an invitation</a></div>
+    <div class="links">
+      <a href="#">Status</a>
+      <a href="#">Support</a>
+      <a href="#">Docs</a>
+    </div>
+  </footer>
+  <script src="/static/login.js" type="module"></script>
+</body>
+</html>
